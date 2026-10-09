@@ -94,6 +94,13 @@ h1 {
 }
 .integration-section-title { margin: 0 0 12px; color: #c4b5fd; font-size: 1.05em; }
 .integration-section-divider { border-top: 1px solid #3f3f50; margin: 24px 0 18px; }
+.connection-input-section, .connection-action-section { padding: 14px; border: 1px solid #3f3f50; border-radius: 9px; background: #252532; }
+.connection-action-section { margin-top: 12px; }
+.connection-input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.connection-input-grid label { display: flex; flex-direction: column; gap: 6px; color: #cbd5e1; font-size: .85em; font-weight: bold; }
+.connection-input-grid .url-input-field { width: 100%; min-width: 0; box-sizing: border-box; }
+.connection-action-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.connection-action-description { margin: -3px 0 10px; color: #94a3b8; font-size: .86em; }
 .integration-row {
     display: flex;
     gap: 12px;
@@ -520,6 +527,7 @@ h1 {
 }
 .modal-content {
     background-color: #2b2b36; padding: 25px; border-radius: 12px; width: 90%; max-width: 530px;
+    max-height: calc(100vh - 48px); overflow-y: auto; box-sizing: border-box;
     box-shadow: 0 5px 20px rgba(0,0,0,0.5); border: 1px solid #3f3f50; position: relative;
 }
 .close-btn { position: absolute; top: 15px; right: 20px; color: #aaaaaa; font-size: 28px; font-weight: bold; cursor: pointer; }
@@ -664,7 +672,7 @@ h1 {
 .edit-history-item button { flex: 0 0 auto; border: 0; border-radius: 5px; padding: 4px 7px; background: #f59e0b; color: #1f2937; font-weight: bold; cursor: pointer; }
 body.light-theme { background: #f4f7fb; color: #1f2937; }
 body.light-theme h1, body.light-theme .modal-title { color: #4338ca; }
-body.light-theme .form-container, body.light-theme .calculator-container, body.light-theme .integration-panel-content, body.light-theme .top-action-bar, body.light-theme .modal-content, body.light-theme .recent-week-sidebar, body.light-theme .settings-section { background: #fff; color: #1f2937; }
+body.light-theme .form-container, body.light-theme .calculator-container, body.light-theme .integration-panel-content, body.light-theme .top-action-bar, body.light-theme .modal-content, body.light-theme .recent-week-sidebar, body.light-theme .settings-section, body.light-theme .connection-input-section, body.light-theme .connection-action-section { background: #fff; color: #1f2937; }
 body.light-theme .usage-guide-section, body.light-theme .export-file-help { background: #f8fafc; color: #1f2937; }
 body.light-theme .usage-guide-section ul, body.light-theme .settings-section p, body.light-theme .platform-setting-row span, body.light-theme .edit-history-list { color: #334155; }
 
@@ -697,6 +705,9 @@ body.light-theme .usage-guide-section ul, body.light-theme .settings-section p, 
     .integration-row .url-input-label { width: auto !important; }
     .integration-row .sync-trigger-btn { width: 100%; }
     .sheet-tools-row .sync-trigger-btn { width: 100%; }
+    .connection-input-grid { grid-template-columns: 1fr; }
+    .connection-action-row { flex-direction: column; }
+    .connection-action-row .sync-trigger-btn { width: 100%; }
     .spreadsheet-guide, .steam-help { padding: 14px; }
     .sheet-header-example { flex-direction: column; }
     .guide-code { max-height: 280px; font-size: 0.75em; }

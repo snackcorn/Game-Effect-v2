@@ -129,7 +129,11 @@ function doGet(e) {
 
 function getAllRecords() {
   const records = [];
-  SpreadsheetApp.getActiveSpreadsheet().getSheets().forEach(sheet => {
+  const allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+  const yearSheets = allSheets.filter(sheet => /^\d{4}$/.test(sheet.getName()));
+  // v2가 만든 연도별 탭이 있으면 기존 원본 탭은 중복 수신하지 않습니다.
+  const sourceSheets = yearSheets.length ? yearSheets : allSheets;
+  sourceSheets.forEach(sheet => {
     const values = sheet.getDataRange().getValues();
     if (values.length < 2) return;
     const headers = values[0].map(String);

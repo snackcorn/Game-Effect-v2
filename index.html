@@ -21,25 +21,22 @@
     <details class="integration-panel">
         <summary>🔗 데이터 연결하기</summary>
         <div class="integration-panel-content">
-        <h2 class="integration-section-title">📂 구글 시트</h2>
-        <div class="integration-row">
-            <span class="url-input-label" style="width: 130px;">📂 1. 기록 가져오기:</span>
-            <input type="text" id="spreadsheetUrlInput" class="url-input-field" placeholder="구글 스프레드시트 주소(URL)를 입력하세요.">
-            <button type="button" class="sync-trigger-btn" onclick="forceFetchSpreadsheetData()">⚡ 기록 가져오기</button>
-        </div>
-        <div class="integration-row integration-row-bordered">
-            <span class="url-input-label" style="width: 130px; color: #10b981;">💾 2. 기록 저장하기:</span>
-            <input type="text" id="webAppUrlInput" class="url-input-field" style="border-color: #10b981;" placeholder="구글 시트 저장 주소(/exec)를 입력하세요.">
-            <button type="button" class="sync-trigger-btn" style="background-color: #10b981;" onclick="saveWebAppUrlFromInput()">🔒 저장 주소 입력</button>
-        </div>
-        <div class="integration-row integration-row-bordered sheet-tools-row">
-            <span class="url-input-label" style="width: 130px; color: #fbbf24;">🧰 3. 기록 도구:</span>
-            <button type="button" id="spreadsheetGuideButton" class="sync-trigger-btn template-btn" onclick="toggleSpreadsheetGuide()" aria-expanded="false">📋 처음 설정하기</button>
-            <button type="button" id="initialCombinedSyncButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="initialCombinedSync()">⚡ 처음 데이터 통합 동기화</button>
-            <button type="button" class="sync-trigger-btn cleanup-btn" onclick="cleanLocalGameData()">🧹 기록 정리</button>
-            <button type="button" class="sync-trigger-btn export-btn" onclick="downloadRecordsAsCsv()">📄 CSV로 저장</button>
-            <button type="button" class="sync-trigger-btn export-btn xlsx-export-btn" onclick="downloadRecordsAsXlsx()">📊 Excel로 저장</button>
-        </div>
+        <section class="connection-input-section">
+            <h2 class="integration-section-title">🔑 연결 정보 입력</h2>
+            <div class="connection-input-grid">
+                <label><span>구글 스프레드시트 주소</span><input type="text" id="spreadsheetUrlInput" class="url-input-field" placeholder="스프레드시트 주소(URL)"></label>
+                <label><span>구글 시트 저장 주소</span><input type="text" id="webAppUrlInput" class="url-input-field" placeholder="Apps Script /exec 주소"></label>
+                <label><span>SteamID64</span><input type="text" id="steamIdInput" class="url-input-field" placeholder="17자리 숫자"></label>
+            </div>
+        </section>
+
+        <section class="connection-action-section">
+            <h2 class="integration-section-title">❔ 연결 도움말</h2>
+            <div class="connection-action-row">
+                <button type="button" id="spreadsheetGuideButton" class="sync-trigger-btn template-btn" onclick="toggleSpreadsheetGuide()" aria-expanded="false">📋 구글 시트 처음 설정</button>
+                <button type="button" id="steamHelpButton" class="sync-trigger-btn" style="background-color: #475569;" onclick="toggleSteamHelp()" aria-expanded="false">❔ Steam 연결 도움말</button>
+            </div>
+        </section>
         <section id="spreadsheetGuide" class="spreadsheet-guide" aria-live="polite">
             <h2>📋 처음 연결하기</h2>
             <p>기록은 시작한 날의 연도별 탭(예: 2026)에 자동 저장됩니다. 종료일이 비어 있는 행은 시작일 하루에만 달력 블록으로 표시됩니다. 첫 번째 줄에는 항목 이름을 적습니다. 최소한 아래 두 칸은 꼭 필요합니다.</p>
@@ -152,7 +149,11 @@ function doGet(e) {
 
 function getAllRecords() {
   const records = [];
-  SpreadsheetApp.getActiveSpreadsheet().getSheets().forEach(sheet => {
+  const allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+  const yearSheets = allSheets.filter(sheet => /^\d{4}$/.test(sheet.getName()));
+  // v2가 만든 연도별 탭이 있으면 기존 원본 탭은 중복 수신하지 않습니다.
+  const sourceSheets = yearSheets.length ? yearSheets : allSheets;
+  sourceSheets.forEach(sheet => {
     const values = sheet.getDataRange().getValues();
     if (values.length &lt; 2) return;
     const headers = values[0].map(String);
@@ -187,20 +188,32 @@ function output(data) {
             <p class="guide-note">위 코드를 모두 붙여 넣고 배포하면, 구글 시트 저장과 모든 연도 기록 가져오기를 함께 사용할 수 있습니다. Steam API 키는 이 코드나 시트가 아닌 Vercel 환경 변수에만 보관됩니다.</p>
         </section>
         <div class="integration-section-divider" role="separator"></div>
-        <h2 class="integration-section-title">🎮 Steam</h2>
-            <div class="integration-row">
-                <span class="url-input-label" style="width: 130px; color: #60a5fa;">🎮 Steam 정보:</span>
-                <input type="text" id="steamIdInput" class="url-input-field" placeholder="SteamID64 (17자리 숫자)">
-                <button type="button" class="sync-trigger-btn" style="background-color: #2563eb;" onclick="saveSteamCredentials()">💾 SteamID 저장</button>
+        <section class="connection-action-section">
+            <h2 class="integration-section-title">⚡ 처음 데이터 불러오기</h2>
+            <p class="connection-action-description">시트만 불러오거나, 시트와 Steam을 함께 비교해 처음 연결할 수 있습니다.</p>
+            <div class="connection-action-row">
+                <button type="button" class="sync-trigger-btn" onclick="forceFetchSpreadsheetData()">📂 시트 기록 불러오기</button>
+                <button type="button" id="initialCombinedSyncButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="initialCombinedSync()">⚡ 시트·Steam 통합 불러오기</button>
             </div>
-            <div class="integration-row integration-row-bordered">
-                <span class="url-input-label" style="width: 130px; color: #a78bfa;">🧰 Steam 도구:</span>
+        </section>
+        <section class="connection-action-section">
+            <h2 class="integration-section-title">🧹 기록 정리 · 제목 정리 · 날짜 재정렬</h2>
+            <div class="connection-action-row">
+                <button type="button" class="sync-trigger-btn cleanup-btn" onclick="cleanLocalGameData()">🧹 기록 정리</button>
                 <button type="button" id="bulkSteamLinkButton" class="sync-trigger-btn" style="background-color: #7c3aed;" onclick="bulkLinkSteamGames()">🔗 Steam 기록 한꺼번에 연결</button>
                 <button type="button" id="normalizeSteamTitlesButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="normalizeExistingSteamTitles()">✏️ Steam 상점 이름으로 제목 정리</button>
                 <button type="button" class="sync-trigger-btn" style="background-color: #0369a1;" onclick="repairSteamSyncDates()">🗓 Steam 날짜 재정렬</button>
                 <button type="button" class="sync-trigger-btn" style="background-color: #b45309;" onclick="rollbackSteamFirstSyncRecords()">↩ Steam 최초 동기화 되돌리기</button>
-                <button type="button" id="steamHelpButton" class="sync-trigger-btn" style="background-color: #475569;" onclick="toggleSteamHelp()" aria-expanded="false">❔ Steam 연결 도움말</button>
             </div>
+        </section>
+        <section class="connection-action-section">
+            <h2 class="integration-section-title">💾 저장 · 내보내기</h2>
+            <div class="connection-action-row">
+                <button type="button" class="sync-trigger-btn" style="background-color: #10b981;" onclick="saveConnectionSettings()">💾 연결 정보 저장</button>
+                <button type="button" class="sync-trigger-btn export-btn" onclick="downloadRecordsAsCsv()">📄 CSV로 저장</button>
+                <button type="button" class="sync-trigger-btn export-btn xlsx-export-btn" onclick="downloadRecordsAsXlsx()">📊 Excel로 저장</button>
+            </div>
+        </section>
         <section id="steamHelp" class="steam-help" aria-live="polite">
             <h2>Steam 연결 안내</h2>
             <p>이 화면에서는 <strong>SteamID64</strong>만 입력합니다. Steam API 키는 Vercel 환경 변수에만 보관되며 브라우저·구글 시트·GitHub에 입력하지 않습니다. 구글 시트는 Steam 동기화와 별개이며, 기록을 백업하거나 다른 브라우저에서 불러올 때만 필요합니다.</p>
@@ -213,7 +226,7 @@ function output(data) {
 
             <h3>연결과 제목 정리</h3>
             <ul>
-                <li><strong>SteamID 저장</strong>: SteamID64만 이 브라우저에 저장합니다. API 키는 저장하지 않습니다.</li>
+                <li><strong>연결 정보 저장</strong>: 입력한 시트 주소·저장 주소·SteamID64를 이 브라우저에 저장합니다. API 키는 저장하지 않습니다.</li>
                 <li><strong>Steam 기록 한꺼번에 연결</strong>: AppID가 비어 있는 기존 Steam 기록을 라이브러리와 비교합니다. 제목이 정확히 같거나 매우 비슷할 때만 자동 연결합니다.</li>
                 <li><strong>Steam 상점 이름으로 제목 정리</strong>: 연결된 AppID를 기준으로 Steam 상점의 한국어 제목을 후보로 보여 줍니다. 체크한 항목만 바뀝니다.</li>
                 <li><strong>Steam 날짜 재정렬</strong>: 한 날짜에 몰린 Steam 기록을 각 게임의 Steam 마지막 실행일로 옮깁니다. 마지막 실행일을 제공하지 않는 게임은 그대로 유지합니다.</li>

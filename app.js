@@ -58,6 +58,36 @@ function syncAllRecordsSafely() {
     return syncAllRecordsToGoogleSheet();
 }
 
+function saveConnectionSettings() {
+    const sheetUrl = document.getElementById('spreadsheetUrlInput')?.value.trim() || '';
+    const webAppUrl = document.getElementById('webAppUrlInput')?.value.trim() || '';
+    const steamId = document.getElementById('steamIdInput')?.value.trim() || '';
+    const saved = [];
+
+    if (sheetUrl) {
+        localStorage.setItem('saved_game_sheet_url', sheetUrl);
+        saved.push('스프레드시트 주소');
+    }
+    if (webAppUrl) {
+        localStorage.setItem('user_local_web_app_url', webAppUrl);
+        saved.push('시트 저장 주소');
+    }
+    if (steamId) {
+        if (!/^\d{17}$/.test(steamId)) {
+            alert('SteamID64는 17자리 숫자로 입력해 주세요.');
+            return;
+        }
+        localStorage.setItem('user_steam_id', steamId);
+        localStorage.removeItem('user_steam_api_key');
+        saved.push('SteamID64');
+    }
+    if (saved.length === 0) {
+        alert('저장할 연결 정보를 하나 이상 입력해 주세요.');
+        return;
+    }
+    alert(`${saved.join(', ')}를 이 브라우저에 저장했습니다.`);
+}
+
 async function copySpreadsheetGuideCode() {
     const code = document.getElementById('spreadsheetAppsScriptCode')?.textContent?.trim();
     const button = document.getElementById('copySpreadsheetGuideButton');
