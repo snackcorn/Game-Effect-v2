@@ -7,6 +7,8 @@ let currentSelectedEventId = null;
 let currentSelectedGameTitle = ""; 
 let calendar = null;
 let shortPlaytimeCollapseScheduled = false;
+let calendarHoverCard = null;
+const steamAchievementCache = new Map();
 const DEFAULT_PLATFORM_SETTINGS = [
     ['steam', '#1044a0'], ['xbox gamepass', '#107c10'], ['Switch', '#ffb0b0'], ['Switch2', '#e60012'], ['ps4', '#b0b0ff'], ['ps5', '#4a148c'], ['stove', '#ffa259'], ['epic', '#00a3ff'], ['mobile', '#2d2d2d'], ['DLC', '#888888'], ['기타', '#b0bec5']
 ].map(([name, color]) => ({ name, color }));
@@ -46,6 +48,14 @@ function describeRecordChanges(before, after) {
 
 function saveToLocalStorage() {
     localStorage.setItem('cached_game_events', JSON.stringify(localEvents));
+}
+
+function syncAllRecordsSafely() {
+    if (typeof syncAllRecordsToGoogleSheet !== 'function') {
+        console.warn('최신 sheet.js가 아직 배포되지 않아 구글 시트 동기화를 건너뜁니다.');
+        return Promise.resolve();
+    }
+    return syncAllRecordsToGoogleSheet();
 }
 
 function getSteamTitleLinks() {
@@ -110,6 +120,14 @@ function getDatesInRange(startDate, endDate) {
     return dates;
 }
 
+function getGameTotalPlayTime(games) {
+    const steamTotals = games
+        .filter(event => event.extendedProps.steamTotal !== null && event.extendedProps.steamTotal !== '' && Number.isFinite(Number(event.extendedProps.steamTotal)))
+        .sort((left, right) => String(left.extendedProps.startDate || '').localeCompare(String(right.extendedProps.startDate || '')));
+    if (steamTotals.length) return Number(steamTotals[steamTotals.length - 1].extendedProps.steamTotal);
+    return games.reduce((sum, event) => sum + Number(event.extendedProps.time || 0), 0);
+}
+
 function buildDailyCalendarEvents() {
     const gamesByIdentity = new Map();
     localEvents.forEach(event => {
@@ -126,6 +144,7 @@ function buildDailyCalendarEvents() {
             const secondDate = second.extendedProps.startDate || '';
             return firstDate.localeCompare(secondDate) || first.id.localeCompare(second.id);
         });
+        const totalPlayTime = getGameTotalPlayTime(games);
 
         games.forEach(event => {
             const game = event.extendedProps;
@@ -142,6 +161,7 @@ function buildDailyCalendarEvents() {
                     extendedProps: {
                         ...game,
                         originalEventId: event.id,
+                        totalPlayTime,
                         displayTotalTime: Number(game.steamTotal),
                         dailyIncrease: Number(game.time || 0),
                         hasExactDailySteamTime: true
@@ -149,14 +169,81 @@ function buildDailyCalendarEvents() {
                 });
             } else {
                 if (getBetaSettings().calendarBlockStyle === 'separate' && dates.length > 1) {
-                    dates.forEach(date => calendarEvents.push({ ...event, id: `${event.id}_${date}`, start: date, end: addDays(date, 1), extendedProps: { ...game, originalEventId: event.id } }));
+                    dates.forEach(date => calendarEvents.push({ ...event, id: `${event.id}_${date}`, start: date, end: addDays(date, 1), extendedProps: { ...game, originalEventId: event.id, totalPlayTime } }));
                 } else {
-                    calendarEvents.push({ ...event, extendedProps: { ...game, originalEventId: event.id } });
+                    calendarEvents.push({ ...event, extendedProps: { ...game, originalEventId: event.id, totalPlayTime } });
                 }
             }
         });
     });
     return calendarEvents;
+}
+
+function hideCalendarHoverCard() {
+    calendarHoverCard?.remove();
+    calendarHoverCard = null;
+}
+
+function getSteamAchievementProgress(steamId, steamAppId) {
+    const cacheKey = `${steamId}:${steamAppId}`;
+    if (!steamAchievementCache.has(cacheKey)) {
+        const request = fetch(`/api/steam-achievements?steamid=${encodeURIComponent(steamId)}&appid=${encodeURIComponent(steamAppId)}`)
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || '업적 정보를 불러오지 못했습니다.');
+                return data;
+            });
+        steamAchievementCache.set(cacheKey, request);
+    }
+    return steamAchievementCache.get(cacheKey);
+}
+
+function showCalendarHoverCard(info) {
+    const game = info.event.extendedProps;
+    const steamAppId = String(game.steamAppId || '').trim();
+    const steamId = getSteamCredentials?.().steamId || '';
+    hideCalendarHoverCard();
+
+    const card = document.createElement('div');
+    card.className = 'calendar-hover-card';
+    card.dataset.eventId = info.event.id;
+    const rect = info.el.getBoundingClientRect();
+    card.style.left = `${Math.min(rect.left, window.innerWidth - 300)}px`;
+    card.style.top = `${Math.min(rect.bottom + 8, window.innerHeight - 180)}px`;
+
+    if (/^\d+$/.test(steamAppId)) {
+        const thumbnail = document.createElement('img');
+        thumbnail.className = 'calendar-hover-thumbnail';
+        thumbnail.src = `https://cdn.akamai.steamstatic.com/steam/apps/${steamAppId}/header.jpg`;
+        thumbnail.alt = '';
+        thumbnail.onerror = () => thumbnail.remove();
+        card.appendChild(thumbnail);
+    }
+
+    const title = document.createElement('strong');
+    title.textContent = info.event.title;
+    const playtime = document.createElement('span');
+    playtime.textContent = `누적 플레이시간: ${Number(game.totalPlayTime ?? game.steamTotal ?? game.time ?? 0).toFixed(1)}시간`;
+    const achievement = document.createElement('span');
+    achievement.className = 'calendar-hover-achievement';
+    card.append(title, playtime);
+    document.body.appendChild(card);
+    calendarHoverCard = card;
+
+    if (!/^\d+$/.test(steamAppId) || !/^\d{17}$/.test(steamId)) {
+        return;
+    }
+
+    getSteamAchievementProgress(steamId, steamAppId)
+        .then(data => {
+            if (calendarHoverCard !== card) return;
+            if (!data.available || !data.totalCount) {
+                return;
+            }
+            achievement.textContent = `업적 진행도: ${data.achievedCount} / ${data.totalCount}`;
+            card.appendChild(achievement);
+        })
+        .catch(() => {});
 }
 
 function scheduleShortPlaytimeCollapse() {
@@ -611,7 +698,7 @@ function openDetailModalById(id) {
         let updatedReviewText = this.innerText.trim();
         getSameGameEvents(gameObj).forEach(evt => { evt.extendedProps.review = updatedReviewText; });
         saveToLocalStorage();
-        syncAllRecordsToGoogleSheet();
+        syncAllRecordsSafely();
     };
 
     rebuildTimelineUI(sameGames);
@@ -696,7 +783,7 @@ function submitInstantMemo() {
     }
     refreshUI();
     saveToLocalStorage();
-    syncAllRecordsToGoogleSheet();
+    syncAllRecordsSafely();
     let selectedRecord = localEvents.find(event => event.id === currentSelectedEventId);
     rebuildTimelineUI(selectedRecord ? getSameGameEvents(selectedRecord) : []);
 }
@@ -771,7 +858,7 @@ function saveEditedData() {
     target.backgroundColor = determineEventColor(target.extendedProps);
     
     saveToLocalStorage();
-    syncAllRecordsToGoogleSheet();
+    syncAllRecordsSafely();
     alert("저장되었습니다."); 
     closeGameModal();
 }
@@ -782,7 +869,7 @@ function deleteCurrentGame() {
         recordEditHistory('기록 삭제', deleted?.title || '이름 없음', localEvents, deleted ? [`시작 날짜: ${deleted.extendedProps.startDate}`, `플랫폼: ${deleted.extendedProps.platform}`] : []);
         localEvents = localEvents.filter(e => e.id !== currentSelectedEventId); 
         saveToLocalStorage();
-        syncAllRecordsToGoogleSheet();
+        syncAllRecordsSafely();
         closeGameModal(); 
     } 
 }
@@ -832,7 +919,7 @@ function undoBetaHistory(index) {
         history.splice(index, 1);
         localStorage.setItem('game_effect_edit_history', JSON.stringify(history));
         saveToLocalStorage();
-        syncAllRecordsToGoogleSheet();
+        syncAllRecordsSafely();
         refreshUI();
         renderBetaSettings();
     } catch {
@@ -878,9 +965,9 @@ function resetAllGameData() {
     localStorage.removeItem('steam_title_appid_links');
     document.getElementById('gameForm').reset();
     renderPlatformOptions('gamePlatform');
-    syncAllRecordsToGoogleSheet();
     refreshUI();
     renderBetaSettings();
+    syncAllRecordsSafely();
     alert('이 브라우저에 저장된 게임 기록 데이터를 초기화했습니다.');
 }
 
@@ -922,8 +1009,11 @@ document.addEventListener('DOMContentLoaded', function() {
         eventDidMount: function(info) {
             const harness = info.el.closest('.fc-daygrid-event-harness');
             if (harness && Number(info.event.extendedProps.time || 0) <= 1) harness.dataset.shortPlaytime = 'true';
+            info.el.addEventListener('mouseenter', () => showCalendarHoverCard(info));
+            info.el.addEventListener('mouseleave', hideCalendarHoverCard);
             scheduleShortPlaytimeCollapse();
         },
+        eventWillUnmount: hideCalendarHoverCard,
         eventClick: function(info) { openDetailModalById(info.event.extendedProps.originalEventId || info.event.id); }
     });
     calendar.render();
@@ -962,6 +1052,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target == modal) { closeGameModal(); }
         if (e.target === document.getElementById('usageGuideModal')) { closeUsageGuide(); }
         if (e.target === document.getElementById('settingsModal')) { closeSettings(); }
+        if (e.target === document.getElementById('steamTitleConverterModal')) { closeSteamTitleConverter(); }
         if (e.target.id !== 'gameName') { document.getElementById('autocompleteList').style.display = 'none'; }
     });
 

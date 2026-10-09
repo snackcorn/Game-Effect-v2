@@ -3,6 +3,7 @@
 // ==========================================
 
 const MIN_STEAM_SYNC_PLAYTIME_MINUTES = 18;
+let pendingSteamTitleChanges = [];
 
 function shouldSyncSteamGame(game) {
     return Number(game?.playtime_forever) >= MIN_STEAM_SYNC_PLAYTIME_MINUTES;
@@ -196,6 +197,142 @@ async function bulkLinkSteamGames() {
     }
 }
 
+// 기존 Steam 기록의 표시 제목을 Steam 라이브러리(API) 이름으로 맞춥니다.
+// AppID가 이미 연결된 경우를 우선하고, 없는 경우에는 자동 연결과 같은 보수적인 이름 비교만 사용합니다.
+async function normalizeExistingSteamTitles() {
+    const button = document.getElementById('normalizeSteamTitlesButton');
+    const steamRecords = localEvents.filter(event => String(event.extendedProps.platform || '').toLocaleLowerCase() === 'steam');
+    if (steamRecords.length === 0) {
+        alert('정리할 Steam 플랫폼 기록이 없습니다.');
+        return;
+    }
+
+    button.disabled = true;
+    button.innerText = '⏳ Steam 이름 확인 중...';
+    try {
+        const ownedGames = await loadSteamOwnedGames();
+        const gamesByAppId = new Map(ownedGames.map(game => [String(game.appid), game]));
+        const groups = new Map();
+
+        steamRecords.forEach(event => {
+            const appId = String(event.extendedProps.steamAppId || '').trim();
+            const key = appId ? `appid:${appId}` : `title:${event.title}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(event);
+        });
+
+        const changes = [];
+        for (const records of groups.values()) {
+            const currentTitle = String(records[0].title || '').trim();
+            const currentAppId = String(records[0].extendedProps.steamAppId || '').trim();
+            let matchedGame = currentAppId ? gamesByAppId.get(currentAppId) : null;
+
+            if (!matchedGame && !currentAppId) {
+                let best = null;
+                let bestScore = -1;
+                let nextBestScore = -1;
+                ownedGames.forEach(game => {
+                    const score = titleSimilarity(currentTitle, game.name);
+                    if (score > bestScore) {
+                        nextBestScore = bestScore;
+                        bestScore = score;
+                        best = game;
+                    } else if (score > nextBestScore) {
+                        nextBestScore = score;
+                    }
+                });
+                if (best && (bestScore === 1 || (bestScore >= 0.92 && bestScore - nextBestScore >= 0.12))) matchedGame = best;
+            }
+
+            const officialTitle = String(matchedGame?.name || '').trim();
+            const appId = String(matchedGame?.appid || currentAppId || '').trim();
+            if (!officialTitle || !appId) continue;
+            const titleChanged = currentTitle !== officialTitle;
+            const appIdLinked = records.some(event => String(event.extendedProps.steamAppId || '') !== appId);
+            if (titleChanged || appIdLinked) changes.push({ records, currentTitle, officialTitle, appId, titleChanged, appIdLinked });
+        }
+
+        if (changes.length === 0) {
+            alert('Steam 라이브러리 이름과 다른, 안전하게 확인 가능한 기록이 없습니다.');
+            return;
+        }
+
+        openSteamTitleConverter(changes);
+    } catch (error) {
+        alert(`Steam 제목 정리 실패: ${error.message}`);
+    } finally {
+        button.disabled = false;
+        button.innerText = '✏️ Steam 이름으로 제목 정리';
+    }
+}
+
+function openSteamTitleConverter(changes) {
+    pendingSteamTitleChanges = changes;
+    const list = document.getElementById('steamTitleConverterList');
+    list.replaceChildren();
+    changes.forEach((change, index) => {
+        const label = document.createElement('label');
+        label.className = 'steam-title-converter-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.dataset.changeIndex = String(index);
+        const text = document.createElement('div');
+        const from = document.createElement('span');
+        from.className = 'steam-title-converter-from';
+        from.textContent = change.currentTitle;
+        const arrow = document.createElement('span');
+        arrow.className = 'steam-title-converter-arrow';
+        arrow.textContent = ' → ';
+        const to = document.createElement('span');
+        to.className = 'steam-title-converter-to';
+        to.textContent = change.officialTitle;
+        const meta = document.createElement('small');
+        meta.className = 'steam-title-converter-meta';
+        meta.textContent = `${change.records.length}개 기록 · AppID ${change.appId}`;
+        text.append(from, arrow, to, meta);
+        label.append(checkbox, text);
+        list.appendChild(label);
+    });
+    const modal = document.getElementById('steamTitleConverterModal');
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeSteamTitleConverter() {
+    const modal = document.getElementById('steamTitleConverterModal');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    pendingSteamTitleChanges = [];
+}
+
+function applySteamTitleConversions() {
+    const selected = [...document.querySelectorAll('#steamTitleConverterList input:checked')]
+        .map(input => pendingSteamTitleChanges[Number(input.dataset.changeIndex)])
+        .filter(Boolean);
+    if (selected.length === 0) {
+        alert('적용할 게임을 하나 이상 선택해 주세요.');
+        return;
+    }
+
+    const recordCount = selected.reduce((sum, change) => sum + change.records.length, 0);
+    recordEditHistory('Steam 제목 정리', `${selected.length}개 게임`, localEvents);
+    selected.forEach(change => {
+        change.records.forEach(event => {
+            event.title = change.officialTitle;
+            event.extendedProps.title = change.officialTitle;
+            event.extendedProps.steamAppId = change.appId;
+        });
+        saveSteamTitleLink(change.currentTitle, change.appId);
+        saveSteamTitleLink(change.officialTitle, change.appId);
+    });
+    saveToLocalStorage();
+    refreshUI();
+    syncAllRecordsSafely();
+    closeSteamTitleConverter();
+    alert(`정리 완료: ${selected.length}개 게임 (${recordCount}개 기록)의 Steam 이름을 맞췄습니다.`);
+}
+
 // 2. 계산기 입력 시 스팀 총 플레이타임 자동 조회
 async function autoFillPrevTime(gameNameInput) {
     let trimmed = gameNameInput.trim().toLowerCase();
@@ -308,7 +445,7 @@ async function syncRecentSteamPlaytime() {
         if (updatedCount > 0) {
             refreshUI();
             saveToLocalStorage();
-            syncAllRecordsToGoogleSheet();
+            syncAllRecordsSafely();
             const skippedMessage = skippedShortPlaytimeCount > 0 ? `\n(총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외)` : '';
             alert(`🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!${skippedMessage}`);
         } else {

@@ -194,6 +194,7 @@ function output(data) {
             <div class="integration-row integration-row-bordered">
                 <span class="url-input-label" style="width: 130px; color: #a78bfa;">🧰 Steam 도구:</span>
                 <button type="button" id="bulkSteamLinkButton" class="sync-trigger-btn" style="background-color: #7c3aed;" onclick="bulkLinkSteamGames()">🔗 Steam 기록 한꺼번에 연결</button>
+                <button type="button" id="normalizeSteamTitlesButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="normalizeExistingSteamTitles()">✏️ Steam 이름으로 제목 정리</button>
                 <button type="button" id="steamHelpButton" class="sync-trigger-btn" style="background-color: #475569;" onclick="toggleSteamHelp()" aria-expanded="false">❔ Steam 연결 도움말</button>
             </div>
         <section id="steamHelp" class="steam-help" aria-live="polite">
@@ -407,6 +408,7 @@ function output(data) {
                 <ul>
                     <li><strong>게임 기록하기:</strong> 게임 이름, 플레이 시간, 날짜 등을 입력하고 기록합니다.</li>
                     <li><strong>최근 플레이 동기화:</strong> Steam 연결 후 누르면 마지막 기록 이후 늘어난 시간만 추가합니다. 첫 동기화 날짜는 Steam의 마지막 실행일을 사용하며, 총 플레이 시간이 0.3시간 이상인 게임만 가져옵니다.</li>
+                    <li><strong>달력 정보:</strong> Steam AppID가 연결된 게임에 마우스를 올리면 썸네일·누적 플레이시간·업적 진행도를 볼 수 있습니다. 없는 정보는 표시하지 않습니다.</li>
                     <li><strong>한줄평:</strong> 게임 전체에 대한 짧은 감상입니다.</li>
                     <li><strong>메모:</strong> 플레이한 날에 남기는 간단한 기록입니다.</li>
                 </ul>
@@ -475,6 +477,19 @@ function output(data) {
                 <button type="button" class="data-reset-button" id="resetAllGameDataButton">게임 기록 데이터 초기화</button>
             </section>
             <button type="button" class="settings-save-button" id="saveSettingsButton">설정 저장</button>
+        </div>
+    </div>
+
+    <div id="steamTitleConverterModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="steamTitleConverterTitle" aria-hidden="true">
+        <div class="modal-content steam-title-converter-content">
+            <button type="button" class="close-btn" aria-label="Steam 제목 변환기 닫기" onclick="closeSteamTitleConverter()">&times;</button>
+            <div class="modal-title" id="steamTitleConverterTitle">✏️ Steam 제목 변환기</div>
+            <p class="steam-title-converter-description">Steam 라이브러리에서 확인한 공식 이름입니다. 바꿀 항목만 선택한 뒤 적용하세요.</p>
+            <div id="steamTitleConverterList" class="steam-title-converter-list"></div>
+            <div class="steam-title-converter-actions">
+                <button type="button" class="action-btn delete-btn" onclick="closeSteamTitleConverter()">취소</button>
+                <button type="button" class="action-btn save-btn" onclick="applySteamTitleConversions()">선택 항목 적용</button>
+            </div>
         </div>
     </div>
 

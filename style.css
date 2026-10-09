@@ -433,6 +433,16 @@ h1 {
 }
 .game-bar-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .game-bar-trophy { font-size: 1em; margin-left: 4px; flex-shrink: 0; }
+.calendar-hover-card {
+    position: fixed; z-index: 10000; width: min(280px, calc(100vw - 20px));
+    padding: 10px; border: 1px solid #6366f1; border-radius: 9px;
+    background: #111827; color: #f8fafc; box-shadow: 0 10px 28px rgba(0, 0, 0, .45);
+    pointer-events: none; display: flex; flex-direction: column; gap: 6px; font-size: .84em;
+}
+.calendar-hover-card strong { color: #e0e7ff; font-size: 1em; }
+.calendar-hover-card span { color: #cbd5e1; }
+.calendar-hover-achievement { color: #fcd34d !important; }
+.calendar-hover-thumbnail { width: 100%; aspect-ratio: 460 / 215; object-fit: cover; border-radius: 5px; background: #1f2937; }
 
 #list-container, #year-list-container {
     max-width: 1200px; margin: 0 auto;
@@ -513,6 +523,16 @@ h1 {
 .close-btn { position: absolute; top: 15px; right: 20px; color: #aaaaaa; font-size: 28px; font-weight: bold; cursor: pointer; }
 .close-btn:hover { color: #ffffff; }
 .modal-title { font-size: 1.4em; font-weight: bold; color: #818cf8; margin-bottom: 20px; border-bottom: 2px solid #3f3f50; padding-bottom: 10px; }
+.steam-title-converter-content { max-width: 680px; }
+.steam-title-converter-description { margin: -7px 0 14px; color: #cbd5e1; font-size: .92em; line-height: 1.5; }
+.steam-title-converter-list { display: flex; flex-direction: column; gap: 8px; max-height: min(52vh, 450px); overflow-y: auto; padding-right: 3px; }
+.steam-title-converter-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px; border: 1px solid #475569; border-radius: 7px; background: #1e293b; cursor: pointer; }
+.steam-title-converter-item input { margin-top: 4px; accent-color: #14b8a6; }
+.steam-title-converter-from { color: #cbd5e1; text-decoration: line-through; overflow-wrap: anywhere; }
+.steam-title-converter-arrow { color: #94a3b8; padding: 0 3px; }
+.steam-title-converter-to { color: #5eead4; font-weight: bold; overflow-wrap: anywhere; }
+.steam-title-converter-meta { display: block; margin-top: 5px; color: #94a3b8; font-size: .82em; }
+.steam-title-converter-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .info-grid { display: grid; grid-template-columns: 100px 1fr; gap: 12px; font-size: 0.95em; margin-bottom: 15px; align-items: center; }
 .info-label { color: #9ca3af; font-weight: bold; }
