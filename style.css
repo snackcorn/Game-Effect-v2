@@ -547,6 +547,13 @@ h1 {
 .steam-title-converter-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .steam-title-converter-apply-btn { display: inline-block; background-color: #10b981; color: #fff; }
 .steam-title-converter-apply-btn:hover { background-color: #059669; }
+.initial-sync-next-steps-content { max-width: 620px; }
+.initial-sync-next-steps-summary { white-space: pre-line; color: #e2e8f0; line-height: 1.6; margin: -5px 0 14px; }
+.initial-sync-next-steps-note { color: #94a3b8; line-height: 1.5; font-size: .92em; }
+.initial-sync-next-steps-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.initial-sync-next-steps-actions .action-btn { border: 0; }
+.initial-sync-retry-btn { background: #7c3aed; color: #fff; }
+.initial-sync-title-btn { background: #0f766e; color: #fff; }
 
 .info-grid { display: grid; grid-template-columns: 100px 1fr; gap: 12px; font-size: 0.95em; margin-bottom: 15px; align-items: center; }
 .info-label { color: #9ca3af; font-weight: bold; }

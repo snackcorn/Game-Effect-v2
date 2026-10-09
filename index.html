@@ -55,7 +55,7 @@
             <p>권장 전체 헤더: <code>이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간</code></p>
             <p class="guide-note">로컬 기록과 시트 기록이 다를 때 <strong>기록 가져오기</strong>를 누르면, 시트 데이터를 사용할지 현재 로컬 기록을 유지할지 확인합니다.</p>
             <p class="guide-note"><strong>주의:</strong> 기록 추가·수정·삭제·Steam 제목 변환은 현재 브라우저의 전체 기록을 연도별 시트에 다시 저장합니다. 처음 연결할 때는 반드시 먼저 <strong>기록 가져오기</strong>로 시트 기록을 불러오고, 중요한 시트는 사본을 만들어 두세요.</p>
-            <p class="guide-note"><strong>처음 Steam까지 함께 연결할 때:</strong> 시트 주소·저장 주소·SteamID64를 입력한 뒤 <strong>처음 데이터 통합 동기화</strong>를 누르세요. 시트와 Steam 라이브러리를 함께 불러오고, AppID 연결 → Steam 상점 한국어 이름 제목 정리 → 최신 플레이 정보 비교 순서로 처리합니다. 연결되지 않은 기존 Steam 기록이 있으면 중복 방지를 위해 멈춥니다.</p>
+            <p class="guide-note"><strong>처음 Steam까지 함께 연결할 때:</strong> 시트 주소·저장 주소·SteamID64를 입력한 뒤 <strong>처음 데이터 통합 동기화</strong>를 누르세요. 시트와 Steam 라이브러리를 함께 불러오고, AppID 연결 → Steam 상점 한국어 이름 제목 정리 → 최신 플레이 정보 비교 순서로 처리합니다. 연결되지 않은 기존 Steam 기록은 중복 방지를 위해 제외하고, 연결된 게임은 계속 반영한 뒤 다음 작업을 선택할 수 있습니다.</p>
             <div class="spreadsheet-preview" aria-label="스프레드시트 입력 예시">
                 <div class="spreadsheet-preview-title">스프레드시트 입력 예시</div>
                 <div class="spreadsheet-preview-grid">
@@ -441,7 +441,7 @@ function output(data) {
                 <ul>
                     <li><strong>연동 방법 안내 위치:</strong> 화면 위쪽의 <strong>데이터 연결하기</strong>를 펼칩니다. 구글 시트는 <strong>처음 설정하기</strong>, Steam은 <strong>Steam 연결 도움말</strong>에서 자세한 방법을 볼 수 있습니다.</li>
                     <li><strong>제목이 다른 Steam 기록:</strong> AppID가 같으면 같은 게임입니다. 한국어 상점명과 영어 API 이름이 다르면 게임 상세의 <strong>Steam 게임 연결</strong>에 상점 주소를 붙여 넣고, 필요할 때 <strong>Steam 상점 이름으로 제목 정리</strong>를 사용합니다.</li>
-                    <li><strong>처음 데이터 통합 동기화:</strong> 시트 주소, Apps Script 저장 주소, SteamID64를 모두 설정한 뒤 사용합니다. 시트와 Steam 라이브러리를 함께 불러온 뒤, AppID 연결 → Steam 상점 한국어 이름 제목 정리 → 최신 플레이 정보 비교 순서로 처리합니다. AppID를 확인하지 못한 기존 Steam 기록이 있으면 중복 생성을 막기 위해 멈춥니다.</li>
+                    <li><strong>처음 데이터 통합 동기화:</strong> 시트 주소, Apps Script 저장 주소, SteamID64를 모두 설정한 뒤 사용합니다. 시트와 Steam 라이브러리를 함께 불러온 뒤, AppID 연결 → Steam 상점 한국어 이름 제목 정리 → 최신 플레이 정보 비교 순서로 처리합니다. AppID를 확인하지 못한 기존 Steam 기록은 중복 생성을 막기 위해 제외하고, 연결된 게임은 계속 반영한 뒤 다음 작업을 고를 수 있습니다.</li>
                     <li><strong>시트 동기화:</strong> 기록을 수정·삭제·제목 변환하면 현재 브라우저의 전체 기록이 연도별 시트에 반영됩니다. 첫 동기화 전에는 시트 기록을 먼저 불러오고, 중요한 시트는 사본을 만들어 두세요.</li>
                     <li><strong>CSV로 저장:</strong> 가볍고 한 장짜리 파일입니다. 다른 서비스에 기록을 옮길 때 편합니다.</li>
                     <li><strong>Excel로 저장:</strong> 시작일 연도별 탭이 나뉜 <code>.xlsx</code> 파일입니다. Excel에서 계속 정리할 때 편합니다.</li>
@@ -515,6 +515,20 @@ function output(data) {
             <div class="steam-title-converter-actions">
                 <button type="button" class="action-btn delete-btn" onclick="closeSteamTitleConverter()">취소</button>
                 <button type="button" class="action-btn steam-title-converter-apply-btn" onclick="applySteamTitleConversions()">선택 항목 적용</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="initialSyncNextStepsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="initialSyncNextStepsTitle" aria-hidden="true">
+        <div class="modal-content initial-sync-next-steps-content">
+            <button type="button" class="close-btn" aria-label="다음 작업 창 닫기" onclick="closeInitialSyncNextSteps()">&times;</button>
+            <div class="modal-title" id="initialSyncNextStepsTitle">✅ 연결된 기록 반영 완료</div>
+            <p id="initialSyncNextStepsSummary" class="initial-sync-next-steps-summary"></p>
+            <p class="initial-sync-next-steps-note">애매한 게임은 아직 수정하지 않아도 됩니다. 아래 작업을 선택하거나, 나중에 데이터 연결하기에서 이어서 정리할 수 있어요.</p>
+            <div class="initial-sync-next-steps-actions">
+                <button type="button" class="action-btn initial-sync-retry-btn" onclick="retryInitialSyncSteamLinking()">🔗 자동 연결 다시 시도</button>
+                <button type="button" class="action-btn initial-sync-title-btn" onclick="openInitialSyncTitleConverter()">✏️ 제목 정리 후보 보기</button>
+                <button type="button" class="action-btn delete-btn" onclick="closeInitialSyncNextSteps()">지금은 마침</button>
             </div>
         </div>
     </div>

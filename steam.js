@@ -291,7 +291,7 @@ async function initialCombinedSync() {
         alert('먼저 SteamID64를 입력하고 저장해 주세요.');
         return;
     }
-    if (!confirm('스프레드시트와 Steam 라이브러리를 함께 불러온 뒤, Steam 상점 이름으로 제목을 정리하고 플레이 정보를 비교합니다.\n\nSteam AppID가 자동으로 연결되지 않는 기존 Steam 기록이 있으면, 중복 생성을 막기 위해 그 지점에서 멈춥니다. 계속할까요?')) return;
+    if (!confirm('스프레드시트와 Steam 라이브러리를 함께 불러온 뒤, Steam 상점 이름으로 제목을 정리하고 플레이 정보를 비교합니다.\n\nAppID를 확정하지 못한 기존 Steam 기록은 이번 동기화에서 제외합니다. 연결된 게임은 계속 안전하게 반영합니다. 계속할까요?')) return;
 
     button.disabled = true;
     button.innerText = '⏳ 시트와 Steam 불러오는 중...';
@@ -315,9 +315,20 @@ async function initialCombinedSync() {
             .map(event => event.title)
             .filter(Boolean))];
         if (stillUnlinkedTitles.length > 0) {
-            // 시트에서 막 불러온 상태이므로, 안전하게 연결·제목 정리된 결과는 먼저 보존합니다.
-            syncAllRecordsSafely();
-            alert(`시트 기록은 불러왔습니다.\n\n하지만 Steam AppID를 확인하지 못한 기존 Steam 게임이 ${stillUnlinkedTitles.length}개 있습니다. 중복 Steam 기록을 만들지 않기 위해 여기서 멈췄습니다.\n\n각 게임 상세의 “Steam 게임 연결”에 상점 주소를 붙여 넣거나, 제목을 정리한 뒤 다시 실행해 주세요.`);
+            // AppID가 없는 기존 제목은 Steam의 어느 게임인지 확정할 수 없습니다. 이 경우에는
+            // 새 Steam 레코드를 만들지 않고, 이미 AppID가 연결된 게임만 안전하게 업데이트합니다.
+            button.innerText = '⏳ 연결된 Steam 기록 반영 중...';
+            const syncResult = await syncRecentSteamPlaytime({
+                silent: true,
+                ownedGames,
+                onlyExistingLinkedRecords: true
+            });
+            openInitialSyncNextSteps({
+                unresolvedTitles: stillUnlinkedTitles,
+                linkResult,
+                titleResult,
+                syncResult
+            });
             return;
         }
 
@@ -330,6 +341,33 @@ async function initialCombinedSync() {
         button.disabled = false;
         button.innerText = '⚡ 처음 데이터 통합 동기화';
     }
+}
+
+function openInitialSyncNextSteps({ unresolvedTitles, linkResult, titleResult, syncResult }) {
+    const modal = document.getElementById('initialSyncNextStepsModal');
+    const summary = document.getElementById('initialSyncNextStepsSummary');
+    const examples = unresolvedTitles.slice(0, 6).join(', ');
+    const more = unresolvedTitles.length > 6 ? ` 외 ${unresolvedTitles.length - 6}개` : '';
+    summary.textContent = `시트 기록을 불러오고, AppID가 연결된 Steam 게임은 계속 반영했습니다. AppID를 확정하지 못한 ${unresolvedTitles.length}개 게임은 중복을 막기 위해 이번 Steam 반영에서 제외했습니다.${examples ? `\n\n확인 필요: ${examples}${more}` : ''}\n\n자동 연결: ${linkResult?.linkedTitles || 0}개 · 제목 정리: ${titleResult?.changedGames || 0}개 · 연결된 게임의 새 기록: ${syncResult?.updatedCount || 0}개`;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeInitialSyncNextSteps() {
+    const modal = document.getElementById('initialSyncNextStepsModal');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+async function retryInitialSyncSteamLinking() {
+    closeInitialSyncNextSteps();
+    await bulkLinkSteamGames();
+    await normalizeExistingSteamTitles();
+}
+
+function openInitialSyncTitleConverter() {
+    closeInitialSyncNextSteps();
+    normalizeExistingSteamTitles();
 }
 
 async function repairSteamSyncDates() {
@@ -649,6 +687,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let endDateUpdatedCount = 0;
         let skippedShortPlaytimeCount = 0;
         let skippedUnknownLastPlayedCount = 0;
+        let skippedUnlinkedRecordCount = 0;
         const todayStr = formatLocalDate(new Date());
 
         for (const game of games) {
@@ -667,6 +706,12 @@ async function syncRecentSteamPlaytime(options = {}) {
                 : [];
             const existingRecords = appIdRecords;
             const isFirstSync = existingRecords.length === 0;
+            // 통합 최초 동기화 중 AppID를 확인하지 못한 기존 시트 기록이 있을 때는
+            // 새 기록을 만들지 않습니다. 제목만 비슷한 게임에 잘못 합쳐지는 일을 막습니다.
+            if (options.onlyExistingLinkedRecords && isFirstSync) {
+                skippedUnlinkedRecordCount++;
+                continue;
+            }
             const steamLastPlayedDate = getSteamLastPlayedDateOrEmpty(game.rtime_last_played);
             // 신규 게임은 Steam이 실제 마지막 실행일을 제공하는 경우에만 첫 기록을 만듭니다.
             // 날짜가 없으면 오늘로 임의 배치하지 않아 달력에 대량 기록이 생기는 것을 막습니다.
@@ -721,7 +766,7 @@ async function syncRecentSteamPlaytime(options = {}) {
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             if (!silent) alert(`이미 모든 스팀 게임의 최신 플레이타임이 반영되어 있습니다! (새로 늘어난 시간 없음)${skippedMessage}`);
         }
-        return { updatedCount, endDateUpdatedCount, skippedShortPlaytimeCount };
+        return { updatedCount, endDateUpdatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount };
     } catch (error) {
         if (silent) throw error;
         alert(`스팀 연동 실패: ${error.message}`);

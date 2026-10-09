@@ -1112,6 +1112,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target === document.getElementById('usageGuideModal')) { closeUsageGuide(); }
         if (e.target === document.getElementById('settingsModal')) { closeSettings(); }
         if (e.target === document.getElementById('steamTitleConverterModal')) { closeSteamTitleConverter(); }
+        if (e.target === document.getElementById('initialSyncNextStepsModal')) { closeInitialSyncNextSteps(); }
         if (e.target.id !== 'gameName') { document.getElementById('autocompleteList').style.display = 'none'; }
     });
 
