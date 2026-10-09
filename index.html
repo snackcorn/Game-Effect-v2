@@ -227,8 +227,8 @@ function output(data) {
             <h3>연결과 제목 정리</h3>
             <ul>
                 <li><strong>연결 정보 저장</strong>: 입력한 시트 주소·저장 주소·SteamID64를 이 브라우저에 저장합니다. API 키는 저장하지 않습니다.</li>
-                <li><strong>Steam 기록 한꺼번에 연결</strong>: AppID가 비어 있는 기존 Steam 기록을 라이브러리와 비교합니다. 제목이 정확히 같거나 매우 비슷할 때만 자동 연결합니다.</li>
-                <li><strong>Steam 상점 이름으로 제목 정리</strong>: 연결된 AppID를 기준으로 Steam 상점의 한국어 제목을 후보로 보여 줍니다. 체크한 항목만 바뀝니다.</li>
+                <li><strong>Steam 기록 한꺼번에 연결</strong>: AppID가 비어 있는 기존 Steam 기록을 라이브러리와 비교합니다. 영어 이름이 다르면 Steam 상점의 한국어 검색 결과와 내 라이브러리 AppID를 대조해 자동 연결합니다.</li>
+                <li><strong>Steam 상점 이름으로 제목 정리</strong>: Steam 상점의 한국어 검색 결과를 이용해 AppID 연결과 제목 정리 후보를 한꺼번에 보여 줍니다. 체크한 항목만 바뀝니다.</li>
                 <li><strong>Steam 날짜 재정렬</strong>: 한 날짜에 몰린 Steam 기록을 각 게임의 Steam 마지막 실행일로 옮깁니다. 마지막 실행일을 제공하지 않는 게임은 그대로 유지합니다.</li>
                 <li><strong>Steam 최초 동기화 되돌리기</strong>: 특정 날짜에 한꺼번에 추가된 최초 Steam 동기화 기록만 골라 삭제합니다. 잘못된 대량 가져오기를 되돌릴 때 사용합니다.</li>
                 <li><strong>한국어 제목과 영어 API 이름이 다른 경우:</strong> 자동 연결이 안 되면 게임 상세의 <strong>Steam 게임 연결</strong>을 눌러 Steam 상점 주소를 한 번 붙여 넣으세요. AppID는 언어와 상관없이 같은 게임을 식별합니다.</li>

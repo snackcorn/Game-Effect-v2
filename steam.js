@@ -5,6 +5,7 @@
 const MIN_STEAM_SYNC_PLAYTIME_MINUTES = 18;
 let pendingSteamTitleChanges = [];
 const steamStoreTitleCache = new Map();
+const steamStoreSearchCache = new Map();
 
 function shouldSyncSteamGame(game) {
     return Number(game?.playtime_forever) >= MIN_STEAM_SYNC_PLAYTIME_MINUTES;
@@ -174,6 +175,29 @@ function getSteamStoreKoreanTitle(steamAppId) {
     return steamStoreTitleCache.get(appId);
 }
 
+function searchSteamStoreKoreanTitles(title) {
+    const key = String(title || '').trim().toLocaleLowerCase();
+    if (!key) return Promise.resolve([]);
+    if (!steamStoreSearchCache.has(key)) {
+        const request = fetch(`/api/steam-store-search?term=${encodeURIComponent(title)}`)
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                return response.ok && Array.isArray(data.items) ? data.items : [];
+            })
+            .catch(() => []);
+        steamStoreSearchCache.set(key, request);
+    }
+    return steamStoreSearchCache.get(key);
+}
+
+async function findOwnedGameByKoreanStoreTitle(title, gamesByAppId) {
+    const storeItems = await searchSteamStoreKoreanTitles(title);
+    const candidates = storeItems
+        .filter(item => gamesByAppId.has(String(item.appid)))
+        .filter(item => titleSimilarity(title, item.name) >= 0.92);
+    return candidates.length === 1 ? gamesByAppId.get(String(candidates[0].appid)) : null;
+}
+
 async function bulkLinkSteamGames(options = {}) {
     const silent = Boolean(options.silent);
     const skipConfirmation = Boolean(options.skipConfirmation);
@@ -194,10 +218,12 @@ async function bulkLinkSteamGames(options = {}) {
     button.innerText = '⏳ Steam 게임 비교 중...';
     try {
         const ownedGames = options.ownedGames || await loadSteamOwnedGames();
+        const gamesByAppId = new Map(ownedGames.map(game => [String(game.appid || ''), game]));
         let linkedTitles = 0;
         let linkedRecords = 0;
+        let koreanStoreLinkedTitles = 0;
 
-        unlinkedTitles.forEach(title => {
+        for (const title of unlinkedTitles) {
             let best = null;
             let bestScore = -1;
             let nextBestScore = -1;
@@ -212,10 +238,14 @@ async function bulkLinkSteamGames(options = {}) {
                 }
             });
             const clearlyBest = best && (best.score === 1 || (best.score >= 0.92 && best.score - nextBestScore >= 0.12));
-            if (!clearlyBest) return;
+            if (!clearlyBest) {
+                best = await findOwnedGameByKoreanStoreTitle(title, gamesByAppId);
+                if (!best) continue;
+                koreanStoreLinkedTitles++;
+            }
 
-            const steamAppId = String(best.game.appid || '');
-            if (!steamAppId) return;
+            const steamAppId = String((best.game || best).appid || '');
+            if (!steamAppId) continue;
             localEvents.forEach(event => {
                 if (event.title === title && !event.extendedProps.steamAppId) {
                     event.extendedProps.steamAppId = steamAppId;
@@ -224,13 +254,14 @@ async function bulkLinkSteamGames(options = {}) {
             });
             saveSteamTitleLink(title, steamAppId);
             linkedTitles++;
-        });
+        }
 
         saveToLocalStorage();
         refreshUI();
         const remaining = unlinkedTitles.length - linkedTitles;
-        if (!silent) alert(`자동 연결 완료\n\n연결한 게임: ${linkedTitles}개 (${linkedRecords}개 기록)\n확인 필요: ${remaining}개\n\n확인 필요 게임은 상세 화면의 'Steam 게임 연결'에서 상점 주소를 붙여 넣어 연결할 수 있습니다.`);
-        return { linkedTitles, linkedRecords, remaining };
+        const koreanStoreMessage = koreanStoreLinkedTitles > 0 ? `\n(한국어 Steam 상점 이름으로 연결: ${koreanStoreLinkedTitles}개)` : '';
+        if (!silent) alert(`자동 연결 완료\n\n연결한 게임: ${linkedTitles}개 (${linkedRecords}개 기록)${koreanStoreMessage}\n확인 필요: ${remaining}개\n\n확인 필요 게임은 상세 화면의 'Steam 게임 연결'에서 상점 주소를 붙여 넣어 연결할 수 있습니다.`);
+        return { linkedTitles, linkedRecords, koreanStoreLinkedTitles, remaining };
     } catch (error) {
         if (silent) throw error;
         alert(`자동 연결 실패: ${error.message}`);
@@ -441,6 +472,7 @@ async function normalizeExistingSteamTitles(options = {}) {
                     }
                 });
                 if (best && (bestScore === 1 || (bestScore >= 0.92 && bestScore - nextBestScore >= 0.12))) matchedGame = best;
+                if (!matchedGame) matchedGame = await findOwnedGameByKoreanStoreTitle(currentTitle, gamesByAppId);
             }
 
             const apiTitle = String(matchedGame?.name || '').trim();
