@@ -527,6 +527,33 @@ function syncAllRecordsToGoogleSheet() {
         .catch(error => console.error('구글 시트 동기화 오류:', error));
 }
 
+async function manuallySyncAllRecordsToGoogleSheet() {
+    const targetUrl = localStorage.getItem('user_local_web_app_url');
+    if (!targetUrl) {
+        alert('먼저 “기록 저장하기”에 Apps Script의 /exec 주소를 입력하고 연결 정보를 저장해 주세요.');
+        return;
+    }
+
+    const button = document.getElementById('manualSheetSyncButton');
+    if (button) {
+        button.disabled = true;
+        button.innerText = '⏳ 시트에 저장 중...';
+    }
+    try {
+        const records = localEvents.map(event => ({ ...event.extendedProps }));
+        const result = await postWebAppData(targetUrl, { action: 'replaceAll', records });
+        if (result.result !== 'success') throw new Error(result.message || '전체 기록 저장에 실패했습니다.');
+        alert(`시트 수동 동기화 완료\n\n현재 기록 ${records.length}개를 연도별 시트에 저장했습니다.`);
+    } catch (error) {
+        alert(`시트 수동 동기화 실패: ${error.message}`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerText = '☁️ 시트 수동 동기화';
+        }
+    }
+}
+
 function sendDataToGoogleSheet() {
     return syncAllRecordsToGoogleSheet();
 }
