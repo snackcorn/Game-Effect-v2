@@ -379,7 +379,7 @@ window.handleGameRecordsResponse = function(payload) {
     if (oldScript) oldScript.remove();
     if (!payload || payload.result !== 'success' || !Array.isArray(payload.records)) {
         alert(`시트를 불러오지 못했습니다. ${payload?.message || '기존 기록은 유지됩니다.'}`);
-        return;
+        return false;
     }
 
     let parsedEvents = [];
@@ -394,8 +394,35 @@ window.handleGameRecordsResponse = function(payload) {
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
         parsedEvents.push(createGameObj(name, startDate, cleanGoogleDate(record.endDate), record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal));
     });
-    applyIncomingSheetRecords(parsedEvents, '구글 시트');
+    return applyIncomingSheetRecords(parsedEvents, '구글 시트');
 };
+
+function fetchAllYearTabsForInitialSync(webAppUrl) {
+    return new Promise((resolve, reject) => {
+        const callbackName = `gameEffectInitialSheetCallback${Date.now()}`;
+        const script = document.createElement('script');
+        const cleanup = () => {
+            script.remove();
+            delete window[callbackName];
+        };
+        window[callbackName] = payload => {
+            try {
+                const applied = window.handleGameRecordsResponse(payload);
+                cleanup();
+                resolve(applied);
+            } catch (error) {
+                cleanup();
+                reject(error);
+            }
+        };
+        script.src = `${webAppUrl}?action=gameRecords&callback=${callbackName}`;
+        script.onerror = () => {
+            cleanup();
+            reject(new Error('시트를 불러오지 못했습니다. Apps Script를 새 코드로 배포했는지 확인해 주세요.'));
+        };
+        document.body.appendChild(script);
+    });
+}
 
 function fetchAllYearTabs(webAppUrl) {
     let oldScript = document.getElementById('game-records-jsonp-script');
