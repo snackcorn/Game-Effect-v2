@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.7 준비 중</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.10 준비 중</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -53,7 +53,7 @@
                 <div><strong>B1</strong><span>시작일</span><small>종료일 중 하나</small></div>
             </div>
             <p>권장 전체 헤더: <code>이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간</code></p>
-            <p class="guide-note">같은 제목이 여러 행이면 <strong>Steam 누적시간</strong>이 가장 큰 행(없으면 <strong>시간</strong>이 가장 큰 행) 하나만 불러옵니다. 로컬 기록과 시트 기록이 다를 때 <strong>기록 가져오기</strong>를 누르면, 시트 데이터를 사용할지 현재 로컬 기록을 유지할지 확인합니다.</p>
+            <p class="guide-note">같은 제목이라도 날짜가 다르면 각각 불러옵니다. 같은 제목·같은 날짜가 중복된 경우에만 <strong>Steam 누적시간</strong>이 가장 큰 행(없으면 <strong>시간</strong>이 가장 큰 행) 하나를 사용합니다. 로컬 기록과 시트 기록이 다를 때 <strong>기록 가져오기</strong>를 누르면, 시트 데이터를 사용할지 현재 로컬 기록을 유지할지 확인합니다.</p>
             <p class="guide-note"><strong>주의:</strong> 기록 추가·수정·삭제·Steam 제목 변환은 현재 브라우저의 전체 기록을 연도별 시트에 다시 저장합니다. 처음 연결할 때는 반드시 먼저 <strong>기록 가져오기</strong>로 시트 기록을 불러오고, 중요한 시트는 사본을 만들어 두세요.</p>
             <p class="guide-note"><strong>처음 Steam까지 함께 연결할 때:</strong> 시트 주소·저장 주소·SteamID64를 입력한 뒤 <strong>처음 데이터 통합 동기화</strong>를 누르세요. 기존 브라우저 기록을 시트 기준으로 교체할지 먼저 선택합니다. 시트 기록은 Steam 상점 제목·AppID를 먼저 통일한 뒤 불러오며, 연결되지 않은 게임은 Steam 반영에서 제외하고 완료 후 다음 작업을 선택할 수 있습니다.</p>
             <div class="spreadsheet-preview" aria-label="스프레드시트 입력 예시">
@@ -242,7 +242,7 @@ function output(data) {
                 <li class="steam-help-muted">연결할 Steam 기록이 없습니다: 오류가 아닙니다. 이미 AppID가 연결됐거나 Steam 플랫폼 기록이 없다는 뜻입니다.</li>
             </ul>
             <h3>최근 플레이 동기화</h3>
-            <p>총 플레이 시간이 0.3시간(18분) 이상인 게임만 가져옵니다. AppID가 연결된 기존 기록은 Steam 누적 시간과 비교하여 <strong>새로 늘어난 시간만</strong> 추가합니다. 같은 게임의 같은 날짜 기록이 있으면 새 기록 대신 기존 시간에 합산합니다. 통합 최초 불러오기에서 시트 종료일과 Steam 마지막 실행일이 있으면 시트 시간을 먼저 유지하고, 남은 시간은 Steam 마지막 실행일에 따로 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</p>
+            <p>총 플레이 시간이 0.3시간(18분) 이상인 게임만 가져옵니다. AppID가 연결된 기존 기록은 Steam 누적 시간과 비교하여 <strong>새로 늘어난 시간만</strong> 추가합니다. 같은 게임의 같은 날짜 기록이 있으면 새 기록 대신 기존 시간에 합산합니다. 통합 최초 불러오기에서 Steam 마지막 실행일이 시트의 가장 최신 기록일보다 뒤면, 시트 시간을 먼저 유지하고 남은 시간은 Steam 마지막 실행일에 따로 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</p>
         </section>
         </div>
     </details>
@@ -343,8 +343,18 @@ function output(data) {
     <div id="report-view" class="content-view">
         <div class="report-header">
             <div style="font-weight: bold; font-size: 1.2em; color:#818cf8;">📊 연도별 플레이 인사이트 통계</div>
-            <select id="reportYearSelect" class="report-select" onchange="calculateYearlyReport(this.value)">
-            </select>
+            <div class="report-controls">
+                <label>연도
+                    <select id="reportYearSelect" class="report-select" onchange="calculateYearlyReport(this.value)"></select>
+                </label>
+                <label>정렬
+                    <select id="reportSortSelect" class="report-select" onchange="calculateYearlyReport(document.getElementById('reportYearSelect').value)">
+                        <option value="playtime">플레이타임 많은 순</option>
+                        <option value="startDate">시작일 최신순</option>
+                        <option value="ending">엔딩 완료 우선</option>
+                    </select>
+                </label>
+            </div>
         </div>
 
         <div class="stats-grid">
@@ -436,7 +446,7 @@ function output(data) {
                 <h2>1. 기본 사용법</h2>
                 <ul>
                     <li><strong>게임 기록하기:</strong> 게임 이름, 플레이 시간, 날짜 등을 입력하고 기록합니다.</li>
-                    <li><strong>최근 플레이 동기화:</strong> SteamID64를 저장한 뒤 누르면 AppID별로 누적 시간을 비교해 늘어난 시간만 추가합니다. 같은 게임의 같은 날짜 기록은 시간에 합산합니다. 통합 최초 불러오기에서는 시트에 적힌 시간을 먼저 유지하고 남은 시간만 Steam 마지막 실행일에 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</li>
+                    <li><strong>최근 플레이 동기화:</strong> SteamID64를 저장한 뒤 누르면 AppID별로 누적 시간을 비교해 늘어난 시간만 추가합니다. 같은 게임의 같은 날짜 기록은 시간에 합산합니다. 통합 최초 불러오기에서는 Steam 마지막 실행일이 시트의 가장 최신 기록일보다 뒤인 경우에만, 시트 시간을 먼저 유지하고 남은 시간만 그 날짜에 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</li>
                     <li><strong>달력 정보:</strong> Steam AppID가 연결된 게임에 마우스를 올리면 가능한 경우 썸네일·누적 플레이시간·업적 진행도를 봅니다. 정보를 가져올 수 없으면 해당 항목은 표시하지 않습니다.</li>
                     <li><strong>한줄평:</strong> 게임 전체에 대한 짧은 감상입니다.</li>
                     <li><strong>메모:</strong> 플레이한 날에 남기는 간단한 기록입니다.</li>

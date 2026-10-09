@@ -232,17 +232,19 @@ function getIncomingRecordTotal(record) {
     return Number.isFinite(time) ? time : 0;
 }
 
-// 시트에 같은 제목이 여러 행으로 있는 경우, 누적 시간이 가장 큰 행 하나만 사용합니다.
-// Steam 제목 통일 후에도 다시 실행되므로 한국어/영어로 겹친 행도 한 번에 정리됩니다.
+// 날짜가 다른 같은 게임 기록은 모두 유지합니다. 같은 제목·같은 날짜가 중복된 경우에만
+// 누적 시간이 가장 큰 행 하나를 사용합니다.
 function deduplicateIncomingSheetRecords(records) {
-    const bestByTitle = new Map();
+    const bestByTitleAndDate = new Map();
     records.forEach(record => {
         const game = record.extendedProps || record || {};
         const titleKey = String(game.title || record.title || '').trim().toLocaleLowerCase();
         if (!titleKey) return;
-        const current = bestByTitle.get(titleKey);
+        const dateKey = String(game.startDate || game.rawEndDate || game.endDate || '').trim();
+        const key = `${titleKey}\u001F${dateKey}`;
+        const current = bestByTitleAndDate.get(key);
         if (!current) {
-            bestByTitle.set(titleKey, record);
+            bestByTitleAndDate.set(key, record);
             return;
         }
 
@@ -251,10 +253,10 @@ function deduplicateIncomingSheetRecords(records) {
         const candidateHasAppId = /^\d+$/.test(String((record.extendedProps || record).steamAppId || ''));
         const currentHasAppId = /^\d+$/.test(String((current.extendedProps || current).steamAppId || ''));
         if (candidateTotal > currentTotal || (candidateTotal === currentTotal && candidateHasAppId && !currentHasAppId)) {
-            bestByTitle.set(titleKey, record);
+            bestByTitleAndDate.set(key, record);
         }
     });
-    return [...bestByTitle.values()];
+    return [...bestByTitleAndDate.values()];
 }
 
 function applyIncomingSheetRecords(records, sourceLabel, options = {}) {

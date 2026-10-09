@@ -541,7 +541,7 @@ function createGameObj(name, start, end, platform, time, endingStatus, memo, rev
     return eventObj;
 }
 
-function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter = "", dateFilter = "", steamAppIdFilter = "") {
+function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter = "", dateFilter = "", steamAppIdFilter = "", sortMode = "playtime") {
     let container = document.getElementById(targetContainerId);
     container.innerHTML = '';
     let sourceList = localEvents;
@@ -565,15 +565,30 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
     sourceList.forEach(evt => {
         let game = evt.extendedProps;
         let key = getGameIdentity(game);
-        let summary = gameSummaries.get(key) || { title: game.title, time: 0, platform: game.platform, hasEnded: false, eventId: evt.id };
+        let summary = gameSummaries.get(key) || {
+            title: game.title, time: 0, platform: game.platform, hasEnded: false,
+            eventId: evt.id, startDate: game.startDate || ''
+        };
         summary.time += game.time;
         if (game.isEnding && (game.isEnding === 'o' || game.isEnding.includes('엔딩'))) summary.hasEnded = true;
+        if (game.startDate && (!summary.startDate || game.startDate < summary.startDate)) summary.startDate = game.startDate;
         gameSummaries.set(key, summary);
     });
 
     let timeLabelText = targetYear ? "해당 연도 플레이 시간" : "총 플레이타임";
+    const summaries = [...gameSummaries.values()].sort((left, right) => {
+        if (sortMode === 'startDate') {
+            const dateOrder = String(right.startDate || '').localeCompare(String(left.startDate || ''));
+            if (dateOrder) return dateOrder;
+        } else if (sortMode === 'ending') {
+            const endingOrder = Number(right.hasEnded) - Number(left.hasEnded);
+            if (endingOrder) return endingOrder;
+        }
+        const timeOrder = right.time - left.time;
+        return timeOrder || left.title.localeCompare(right.title, 'ko');
+    });
 
-    for (let summary of gameSummaries.values()) {
+    for (let summary of summaries) {
         let title = summary.title;
         let aggregatedTime = summary.time;
         let platform = summary.platform;
@@ -585,10 +600,12 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
         card.style.borderLeft = `6px solid ${cardColor}`;
         
         let badgeHTML = hasEnded ? '<div class="card-ending-badge">🏆 엔딩 완료</div>' : '';
+        let startInfoHTML = targetYear ? '<div class="card-info">📅 첫 시작일: ' + (summary.startDate || '-') + '</div>' : '';
         card.innerHTML = `
             ${badgeHTML}
             <div class="card-title">${title}</div>
             <div class="card-info" style="font-size: 1.1em; margin-top: 10px;">⏱ ${timeLabelText}: <span style="color:#818cf8; font-size:1.2em;">${aggregatedTime.toFixed(1)}</span> 시간</div>
+            ${startInfoHTML}
         `;
         card.addEventListener('click', () => { openDetailModalById(summary.eventId); });
         container.appendChild(card);
@@ -630,7 +647,8 @@ function calculateYearlyReport(targetYear) {
     document.getElementById('statMostPlayedTime').innerText = mostPlayedTime.toFixed(1) + 'h 올해 순수 플레이';
     document.getElementById('statLongestMemo').innerText = latestReviewText;
 
-    buildAggregatedCards('year-list-container', targetYear);
+    const sortMode = document.getElementById('reportSortSelect')?.value || 'playtime';
+    buildAggregatedCards('year-list-container', targetYear, '', '', '', sortMode);
 }
 
 function formatLocalDate(date) {

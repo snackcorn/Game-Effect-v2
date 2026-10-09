@@ -827,12 +827,20 @@ async function syncRecentSteamPlaytime(options = {}) {
                 // 통합 최초 불러오기에서는 시트에 이미 적힌 시간을 먼저 유지하고,
                 // Steam 누적시간과의 차이만 마지막 실행일에 별도 기록합니다.
                 const displayName = existingRecords[0]?.title || name;
-                const hasSheetEndDate = existingRecords.some(record => Boolean(record.extendedProps.endDate));
+                const latestRecordedDate = existingRecords.reduce((latest, record) => {
+                    const recordDate = String(
+                        record.extendedProps.rawEndDate
+                        || record.extendedProps.endDate
+                        || record.extendedProps.startDate
+                        || ''
+                    );
+                    return recordDate > latest ? recordDate : latest;
+                }, '');
                 const useLastPlayedForRemainder = Boolean(
                     options.useLastPlayedDateForSheetRemainder
                     && !isFirstSync
-                    && hasSheetEndDate
                     && steamLastPlayedDate
+                    && steamLastPlayedDate > latestRecordedDate
                 );
                 const syncDate = (isFirstSync || useLastPlayedForRemainder)
                     ? getSteamLastPlayedDate(game.rtime_last_played, todayStr)
