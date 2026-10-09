@@ -92,6 +92,8 @@ h1 {
 .integration-panel-content {
     padding: 15px;
 }
+.integration-section-title { margin: 0 0 12px; color: #c4b5fd; font-size: 1.05em; }
+.integration-section-divider { border-top: 1px solid #3f3f50; margin: 24px 0 18px; }
 .integration-row {
     display: flex;
     gap: 12px;
