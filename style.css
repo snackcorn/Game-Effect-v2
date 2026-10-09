@@ -101,6 +101,10 @@ h1 {
 .connection-input-grid .url-input-field { width: 100%; min-width: 0; box-sizing: border-box; }
 .connection-action-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .connection-action-description { margin: -3px 0 10px; color: #94a3b8; font-size: .86em; }
+.record-tools-help { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 14px 0 0; padding: 12px; border: 1px solid #3f3f50; border-radius: 7px; background: #1e1e29; }
+.record-tools-help div { min-width: 0; }
+.record-tools-help dt { color: #c4b5fd; font-size: .85em; font-weight: bold; }
+.record-tools-help dd { margin: 3px 0 0; color: #cbd5e1; font-size: .8em; line-height: 1.45; }
 .integration-row {
     display: flex;
     gap: 12px;
@@ -682,6 +686,9 @@ body.light-theme h1, body.light-theme .modal-title { color: #4338ca; }
 body.light-theme .form-container, body.light-theme .calculator-container, body.light-theme .integration-panel-content, body.light-theme .top-action-bar, body.light-theme .modal-content, body.light-theme .recent-week-sidebar, body.light-theme .settings-section, body.light-theme .connection-input-section, body.light-theme .connection-action-section { background: #fff; color: #1f2937; }
 body.light-theme .usage-guide-section, body.light-theme .export-file-help { background: #f8fafc; color: #1f2937; }
 body.light-theme .usage-guide-section ul, body.light-theme .settings-section p, body.light-theme .platform-setting-row span, body.light-theme .edit-history-list { color: #334155; }
+body.light-theme .record-tools-help { background: #f8fafc; border-color: #cbd5e1; }
+body.light-theme .record-tools-help dt { color: #4338ca; }
+body.light-theme .record-tools-help dd { color: #475569; }
 
 @media (max-width: 1600px) {
     .app-layout { display: block; left: 0; }
@@ -715,6 +722,7 @@ body.light-theme .usage-guide-section ul, body.light-theme .settings-section p, 
     .connection-input-grid { grid-template-columns: 1fr; }
     .connection-action-row { flex-direction: column; }
     .connection-action-row .sync-trigger-btn { width: 100%; }
+    .record-tools-help { grid-template-columns: 1fr; }
     .spreadsheet-guide, .steam-help { padding: 14px; }
     .sheet-header-example { flex-direction: column; }
     .guide-code { max-height: 280px; font-size: 0.75em; }

@@ -327,6 +327,27 @@ async function normalizeIncomingSteamSheetRecords(records, ownedGames) {
     return { records, linkedTitles, renamedTitles, unresolvedTitles };
 }
 
+let initialSyncDataChoiceResolver = null;
+
+function chooseInitialSyncDataMode() {
+    if (localEvents.length === 0) return Promise.resolve('replace');
+    const modal = document.getElementById('initialSyncDataChoiceModal');
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    return new Promise(resolve => {
+        initialSyncDataChoiceResolver = resolve;
+    });
+}
+
+function selectInitialSyncDataMode(mode) {
+    const modal = document.getElementById('initialSyncDataChoiceModal');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    const resolve = initialSyncDataChoiceResolver;
+    initialSyncDataChoiceResolver = null;
+    if (resolve) resolve(mode);
+}
+
 // 처음 연결할 때 시트 기록을 먼저 기준 데이터로 가져온 뒤 Steam 정보를 안전하게 반영합니다.
 async function initialCombinedSync() {
     const button = document.getElementById('initialCombinedSyncButton');
@@ -346,6 +367,8 @@ async function initialCombinedSync() {
         alert('먼저 SteamID64를 입력하고 저장해 주세요.');
         return;
     }
+    const dataMode = await chooseInitialSyncDataMode();
+    if (dataMode === 'cancel') return;
     if (!confirm('스프레드시트와 Steam 라이브러리를 함께 불러온 뒤, Steam 상점 이름으로 제목을 정리하고 플레이 정보를 비교합니다.\n\nAppID를 확정하지 못한 기존 Steam 기록은 이번 동기화에서 제외합니다. 연결된 게임은 계속 안전하게 반영합니다. 계속할까요?')) return;
 
     button.disabled = true;
@@ -363,7 +386,9 @@ async function initialCombinedSync() {
 
         button.innerText = '⏳ Steam 상점 제목 통일 중...';
         const incomingResult = await normalizeIncomingSteamSheetRecords(sheetRecords, ownedGames);
-        const appliedSheetRecords = applyIncomingSheetRecords(incomingResult.records, '구글 시트');
+        const appliedSheetRecords = applyIncomingSheetRecords(incomingResult.records, '구글 시트', {
+            forceReplace: dataMode === 'replace'
+        });
         if (!appliedSheetRecords) {
             alert('시트 기록을 로컬에 적용하지 않아 통합 동기화를 중단했습니다.');
             return;
@@ -753,6 +778,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let skippedUnknownLastPlayedCount = 0;
         let skippedUnlinkedRecordCount = 0;
         let lastPlayedRemainderCount = 0;
+        let sameDayMergedCount = 0;
         const todayStr = formatLocalDate(new Date());
 
         for (const game of games) {
@@ -816,8 +842,19 @@ async function syncRecentSteamPlaytime(options = {}) {
                     : useLastPlayedForRemainder
                         ? '시트 기록 이후 Steam 잔여 시간 (마지막 실행일 기준)'
                     : '스팀 동기화 세션';
-                const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours);
-                localEvents.push(newGame);
+                // 같은 게임이 같은 날짜에 이미 있으면 새 블록을 추가하지 않고 시간을 합칩니다.
+                const sameDayRecord = existingRecords.find(record =>
+                    record.extendedProps.startDate === syncDate
+                    && (record.extendedProps.rawEndDate || record.extendedProps.endDate || syncDate) === syncDate
+                );
+                if (sameDayRecord) {
+                    sameDayRecord.extendedProps.time = parseFloat((Number(sameDayRecord.extendedProps.time || 0) + diffHours).toFixed(1));
+                    sameDayRecord.extendedProps.steamTotal = currentTotalSteamHours;
+                    sameDayMergedCount++;
+                } else {
+                    const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours);
+                    localEvents.push(newGame);
+                }
                 updatedCount++;
                 if (useLastPlayedForRemainder) lastPlayedRemainderCount++;
             }
@@ -832,7 +869,8 @@ async function syncRecentSteamPlaytime(options = {}) {
             if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             const syncMessage = `🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!`;
-            if (!silent) alert(`${syncMessage}${skippedMessage}`);
+            const mergedMessage = sameDayMergedCount > 0 ? `\n기존 같은 날짜 기록에 합산: ${sameDayMergedCount}개` : '';
+            if (!silent) alert(`${syncMessage}${mergedMessage}${skippedMessage}`);
         } else {
             const skippedMessages = [];
             if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
@@ -840,7 +878,7 @@ async function syncRecentSteamPlaytime(options = {}) {
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             if (!silent) alert(`이미 모든 스팀 게임의 최신 플레이타임이 반영되어 있습니다! (새로 늘어난 시간 없음)${skippedMessage}`);
         }
-        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, lastPlayedRemainderCount };
+        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, lastPlayedRemainderCount, sameDayMergedCount };
     } catch (error) {
         if (silent) throw error;
         alert(`스팀 연동 실패: ${error.message}`);

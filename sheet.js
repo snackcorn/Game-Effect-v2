@@ -257,13 +257,13 @@ function deduplicateIncomingSheetRecords(records) {
     return [...bestByTitle.values()];
 }
 
-function applyIncomingSheetRecords(records, sourceLabel) {
+function applyIncomingSheetRecords(records, sourceLabel, options = {}) {
     records = deduplicateIncomingSheetRecords(records);
     const localRecords = getComparableGameRecords(localEvents);
     const sheetRecords = getComparableGameRecords(records);
     const isSame = JSON.stringify(localRecords) === JSON.stringify(sheetRecords);
 
-    if (localEvents.length > 0 && !isSame) {
+    if (localEvents.length > 0 && !isSame && !options.forceReplace) {
         const useSheet = confirm(
             `${sourceLabel} 데이터(${records.length}개)와 이 브라우저의 로컬 데이터(${localEvents.length}개)가 서로 다릅니다.\n\n` +
             `확인: 시트 데이터를 사용해 로컬 기록을 교체합니다.\n` +
