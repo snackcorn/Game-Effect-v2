@@ -535,6 +535,8 @@ h1 {
 .steam-title-converter-to { color: #5eead4; font-weight: bold; overflow-wrap: anywhere; }
 .steam-title-converter-meta { display: block; margin-top: 5px; color: #94a3b8; font-size: .82em; }
 .steam-title-converter-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.steam-title-converter-apply-btn { display: inline-block; background-color: #10b981; color: #fff; }
+.steam-title-converter-apply-btn:hover { background-color: #059669; }
 
 .info-grid { display: grid; grid-template-columns: 100px 1fr; gap: 12px; font-size: 0.95em; margin-bottom: 15px; align-items: center; }
 .info-label { color: #9ca3af; font-weight: bold; }

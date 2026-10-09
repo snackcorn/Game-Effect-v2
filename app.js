@@ -995,7 +995,6 @@ function resetAllGameData() {
     renderPlatformOptions('gamePlatform');
     refreshUI();
     renderBetaSettings();
-    syncAllRecordsSafely();
     alert('이 브라우저에 저장된 게임 기록 데이터를 초기화했습니다.');
 }
 

@@ -55,6 +55,7 @@
             </div>
             <p>권장 전체 헤더: <code>이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간</code></p>
             <p class="guide-note">로컬 기록과 시트 기록이 다를 때 <strong>기록 가져오기</strong>를 누르면, 시트 데이터를 사용할지 현재 로컬 기록을 유지할지 확인합니다.</p>
+            <p class="guide-note"><strong>주의:</strong> 기록 추가·수정·삭제·Steam 제목 변환은 현재 브라우저의 전체 기록을 연도별 시트에 다시 저장합니다. 처음 연결할 때는 반드시 먼저 <strong>기록 가져오기</strong>로 시트 기록을 불러오고, 중요한 시트는 사본을 만들어 두세요.</p>
             <div class="spreadsheet-preview" aria-label="스프레드시트 입력 예시">
                 <div class="spreadsheet-preview-title">스프레드시트 입력 예시</div>
                 <div class="spreadsheet-preview-grid">
@@ -68,14 +69,14 @@
             <h3>연결 코드 넣는 방법</h3>
             <ol>
                 <li>스프레드시트에서 <strong>확장 프로그램 → Apps Script</strong>를 엽니다.</li>
-                <li>기존 코드를 지우고 아래 코드를 붙여 넣은 뒤 저장합니다.</li>
-                <li><strong>배포 → 새 배포 → 웹 앱</strong>을 선택합니다.</li>
+                <li>기존 코드를 지우고 아래 코드를 붙여 넣은 뒤 저장합니다. <strong>전체 코드 복사</strong> 버튼을 사용할 수 있습니다.</li>
+                <li>처음이면 <strong>배포 → 새 배포 → 웹 앱</strong>, 기존 웹 앱을 고치는 경우 <strong>배포 → 배포 관리 → 수정 → 새 버전</strong>으로 배포합니다.</li>
                 <li>실행 계정은 <strong>나</strong>, 액세스 권한은 <strong>모든 사용자</strong>로 설정합니다.</li>
                 <li>생성된 <code>/exec</code> 주소를 복사해 위의 <strong>기록 저장하기</strong>에 넣습니다.</li>
             </ol>
 
             <details class="guide-code-details">
-                <summary>📄 구글 시트·Steam 연동 코드 보기</summary>
+                <summary>📄 구글 시트 연동 코드 보기</summary>
                 <button type="button" id="copySpreadsheetGuideButton" class="copy-spreadsheet-code-button" onclick="copySpreadsheetGuideCode()">📋 전체 코드 복사</button>
                 <pre class="guide-code"><code id="spreadsheetAppsScriptCode">const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간'];
 
@@ -180,7 +181,7 @@ function output(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }</code></pre>
             </details>
-            <p class="guide-note">위 코드를 모두 붙여 넣고 새 배포하면, 구글 시트 저장과 모든 연도 기록 가져오기를 함께 사용할 수 있습니다. Steam은 Vercel 서버를 통해 별도로 연동됩니다.</p>
+            <p class="guide-note">위 코드를 모두 붙여 넣고 배포하면, 구글 시트 저장과 모든 연도 기록 가져오기를 함께 사용할 수 있습니다. Steam API 키는 이 코드나 시트가 아닌 Vercel 환경 변수에만 보관됩니다.</p>
         </section>
         </div>
     </details>
@@ -196,12 +197,12 @@ function output(data) {
             <div class="integration-row integration-row-bordered">
                 <span class="url-input-label" style="width: 130px; color: #a78bfa;">🧰 Steam 도구:</span>
                 <button type="button" id="bulkSteamLinkButton" class="sync-trigger-btn" style="background-color: #7c3aed;" onclick="bulkLinkSteamGames()">🔗 Steam 기록 한꺼번에 연결</button>
-                <button type="button" id="normalizeSteamTitlesButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="normalizeExistingSteamTitles()">✏️ Steam 이름으로 제목 정리</button>
+                <button type="button" id="normalizeSteamTitlesButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="normalizeExistingSteamTitles()">✏️ Steam 상점 이름으로 제목 정리</button>
                 <button type="button" id="steamHelpButton" class="sync-trigger-btn" style="background-color: #475569;" onclick="toggleSteamHelp()" aria-expanded="false">❔ Steam 연결 도움말</button>
             </div>
         <section id="steamHelp" class="steam-help" aria-live="polite">
-            <h2>Steam 연결 전에 준비할 것</h2>
-            <p>Steam API 키는 Vercel 서버에 안전하게 보관되어 있습니다. 이 화면에서는 <strong>SteamID64</strong>만 입력하면 됩니다. 구글 시트 연결은 Steam 동기화와 별개로, 기록을 저장할 때만 필요합니다.</p>
+            <h2>Steam 연결 안내</h2>
+            <p>이 화면에서는 <strong>SteamID64</strong>만 입력합니다. Steam API 키는 Vercel 환경 변수에만 보관되며 브라우저·구글 시트·GitHub에 입력하지 않습니다. 구글 시트는 Steam 동기화와 별개이며, 기록을 백업하거나 다른 브라우저에서 불러올 때만 필요합니다.</p>
 
             <h3>SteamID64 찾기</h3>
             <p>Steam 프로필 주소가 <code>.../profiles/7656...</code>라면, 뒤의 17자리 숫자가 SteamID64입니다. 주소가 <code>/id/내이름</code>처럼 보이면 <a href="https://steamid.io/lookup" target="_blank" rel="noopener noreferrer">SteamID 찾기</a>에서 프로필 주소를 넣어 확인할 수 있습니다.</p>
@@ -209,13 +210,16 @@ function output(data) {
             <h3>Steam 공개 설정</h3>
             <p>Steam 프로필 → <strong>프로필 편집 → 개인정보 설정</strong>에서 <strong>게임 세부 정보</strong>를 <strong>공개</strong>로 바꿔야 게임 목록과 플레이 시간을 가져올 수 있습니다.</p>
 
-            <h3>버튼 뜻</h3>
+            <h3>연결과 제목 정리</h3>
             <ul>
                 <li><strong>SteamID 저장</strong>: SteamID64만 이 브라우저에 저장합니다. API 키는 저장하지 않습니다.</li>
-                <li><strong>Steam 기록 한꺼번에 연결</strong>: AppID가 비어 있는 예전 Steam 기록만 찾아 연결합니다.</li>
-                <li class="steam-help-muted">연결할 Steam 기록이 없습니다: 오류가 아닙니다. 이미 모두 AppID가 연결되어 있거나 Steam 기록이 없다는 뜻입니다.</li>
-                <li class="steam-help-muted">최근 플레이 동기화: 첫 동기화는 Steam의 마지막 실행일에, 이후에는 동기화한 날짜에 증가한 시간만 기록합니다.</li>
+                <li><strong>Steam 기록 한꺼번에 연결</strong>: AppID가 비어 있는 기존 Steam 기록을 라이브러리와 비교합니다. 제목이 정확히 같거나 매우 비슷할 때만 자동 연결합니다.</li>
+                <li><strong>Steam 상점 이름으로 제목 정리</strong>: 연결된 AppID를 기준으로 Steam 상점의 한국어 제목을 후보로 보여 줍니다. 체크한 항목만 바뀝니다.</li>
+                <li><strong>한국어 제목과 영어 API 이름이 다른 경우:</strong> 자동 연결이 안 되면 게임 상세의 <strong>Steam 게임 연결</strong>을 눌러 Steam 상점 주소를 한 번 붙여 넣으세요. AppID는 언어와 상관없이 같은 게임을 식별합니다.</li>
+                <li class="steam-help-muted">연결할 Steam 기록이 없습니다: 오류가 아닙니다. 이미 AppID가 연결됐거나 Steam 플랫폼 기록이 없다는 뜻입니다.</li>
             </ul>
+            <h3>최근 플레이 동기화</h3>
+            <p>총 플레이 시간이 0.3시간(18분) 이상인 게임만 가져옵니다. AppID가 연결된 기존 기록은 Steam 누적 시간과 비교하여 <strong>새로 늘어난 시간만</strong> 추가합니다. 첫 동기화는 Steam의 마지막 실행일, 이후 동기화는 동기화한 날짜로 기록합니다.</p>
         </section>
         </div>
     </details>
@@ -409,8 +413,8 @@ function output(data) {
                 <h2>1. 기본 사용법</h2>
                 <ul>
                     <li><strong>게임 기록하기:</strong> 게임 이름, 플레이 시간, 날짜 등을 입력하고 기록합니다.</li>
-                    <li><strong>최근 플레이 동기화:</strong> Steam 연결 후 누르면 마지막 기록 이후 늘어난 시간만 추가합니다. 첫 동기화 날짜는 Steam의 마지막 실행일을 사용하며, 총 플레이 시간이 0.3시간 이상인 게임만 가져옵니다.</li>
-                    <li><strong>달력 정보:</strong> Steam AppID가 연결된 게임에 마우스를 올리면 썸네일·누적 플레이시간·업적 진행도를 볼 수 있습니다. 없는 정보는 표시하지 않습니다.</li>
+                    <li><strong>최근 플레이 동기화:</strong> SteamID64를 저장한 뒤 누르면 AppID별로 누적 시간을 비교해 늘어난 시간만 추가합니다. 첫 기록 날짜는 마지막 실행일이며, 18분 미만 게임은 제외됩니다.</li>
+                    <li><strong>달력 정보:</strong> Steam AppID가 연결된 게임에 마우스를 올리면 가능한 경우 썸네일·누적 플레이시간·업적 진행도를 봅니다. 정보를 가져올 수 없으면 해당 항목은 표시하지 않습니다.</li>
                     <li><strong>한줄평:</strong> 게임 전체에 대한 짧은 감상입니다.</li>
                     <li><strong>메모:</strong> 플레이한 날에 남기는 간단한 기록입니다.</li>
                 </ul>
@@ -420,6 +424,8 @@ function output(data) {
                 <h2>2. 연동과 파일 저장</h2>
                 <ul>
                     <li><strong>연동 방법 안내 위치:</strong> 화면 위쪽의 <strong>구글 시트 연결하기</strong> 또는 <strong>Steam 연결하기</strong>를 펼칩니다. 구글 시트는 <strong>처음 설정하기</strong>, Steam은 <strong>Steam 연결 도움말</strong>에서 자세한 방법을 볼 수 있습니다.</li>
+                    <li><strong>제목이 다른 Steam 기록:</strong> AppID가 같으면 같은 게임입니다. 한국어 상점명과 영어 API 이름이 다르면 게임 상세의 <strong>Steam 게임 연결</strong>에 상점 주소를 붙여 넣고, 필요할 때 <strong>Steam 상점 이름으로 제목 정리</strong>를 사용합니다.</li>
+                    <li><strong>시트 동기화:</strong> 기록을 수정·삭제·제목 변환하면 현재 브라우저의 전체 기록이 연도별 시트에 반영됩니다. 첫 동기화 전에는 시트 기록을 먼저 불러오고, 중요한 시트는 사본을 만들어 두세요.</li>
                     <li><strong>CSV로 저장:</strong> 가볍고 한 장짜리 파일입니다. 다른 서비스에 기록을 옮길 때 편합니다.</li>
                     <li><strong>Excel로 저장:</strong> 시작일 연도별 탭이 나뉜 <code>.xlsx</code> 파일입니다. Excel에서 계속 정리할 때 편합니다.</li>
                 </ul>
@@ -431,14 +437,15 @@ function output(data) {
                     <li>기록을 추가한 뒤 새로고침해도 기록이 남아 있으면 정상 저장된 것입니다.</li>
                     <li>저장된 기록은 현재 사용하는 이 브라우저에 보관됩니다. 다른 기기나 다른 브라우저에서는 자동으로 보이지 않습니다.</li>
                     <li><strong>다른 브라우저에서 불러오기:</strong> 구글 시트에 기록을 저장한 뒤, 다른 브라우저에서 같은 시트 주소를 넣고 <strong>기록 가져오기</strong>를 누르면 됩니다.</li>
+                    <li><strong>데이터 초기화:</strong> 설정의 초기화는 이 브라우저의 게임 기록·편집 기록·Steam 제목 연결만 삭제합니다. 구글 시트, SteamID64, 시트 주소는 유지되며 시트 기록을 다시 가져올 수 있습니다.</li>
                 </ul>
             </section>
 
             <section class="usage-guide-section">
                 <h2>4. 오류가 생겼을 때</h2>
                 <ul>
-                    <li><strong>Steam 게임 목록을 가져오지 못함:</strong> Steam 게임 세부 정보를 공개로 바꾸고, API 키와 SteamID64를 확인합니다.</li>
-                    <li><strong>웹 앱 통신 중 오류:</strong> 구글 시트의 Apps Script에 최신 코드를 붙여 넣고 <strong>새 배포 → 웹 앱</strong>을 진행합니다. 실행 계정은 <strong>나</strong>, 액세스 권한은 <strong>모든 사용자</strong>로 설정한 뒤, 새로 나온 <code>/exec</code> 주소를 기록 저장하기에 다시 넣습니다. <code>/dev</code> 주소는 사용할 수 없습니다.</li>
+                    <li><strong>Steam 게임 목록을 가져오지 못함:</strong> Steam의 게임 세부 정보를 공개로 바꾸고 SteamID64를 확인합니다. 사이트 관리자라면 Vercel의 <code>STEAM_WEB_API_KEY</code>가 Production 환경에 등록됐는지도 확인합니다.</li>
+                    <li><strong>웹 앱 통신 중 오류:</strong> 구글 시트의 Apps Script에 최신 코드를 붙여 넣고 <strong>배포 관리 → 수정 → 새 버전</strong>으로 웹 앱을 다시 배포합니다. 실행 계정은 <strong>나</strong>, 액세스 권한은 <strong>모든 사용자</strong>이며, <code>/exec</code> 주소만 기록 저장하기에 넣습니다. <code>/dev</code> 주소는 사용할 수 없습니다.</li>
                     <li><strong>연결할 Steam 기록이 없습니다:</strong> 오류가 아니라 이미 가져왔거나 새 플레이 기록이 없는 상태일 수 있습니다.</li>
                     <li><strong>새로 늘어난 시간이 없음:</strong> 플레이 시간이 늘지 않았거나 늘어난 시간이 0.3시간보다 짧습니다.</li>
                 </ul>
@@ -475,7 +482,7 @@ function output(data) {
             </section>
             <section class="settings-section settings-danger-section">
                 <h2>데이터 초기화</h2>
-                <p>이 브라우저에 저장된 게임 기록, 최근 편집 기록, Steam 게임 연결 정보를 삭제합니다. 구글 시트의 기록과 SteamID64·구글 시트 연결 주소는 삭제하지 않습니다.</p>
+                <p>이 브라우저에 저장된 게임 기록, 최근 편집 기록, Steam 제목 연결 정보를 삭제합니다. 구글 시트의 기록과 SteamID64·구글 시트 연결 주소는 삭제하지 않으며, 나중에 시트에서 다시 가져올 수 있습니다.</p>
                 <button type="button" class="data-reset-button" id="resetAllGameDataButton">게임 기록 데이터 초기화</button>
             </section>
             <button type="button" class="settings-save-button" id="saveSettingsButton">설정 저장</button>
@@ -486,11 +493,11 @@ function output(data) {
         <div class="modal-content steam-title-converter-content">
             <button type="button" class="close-btn" aria-label="Steam 제목 변환기 닫기" onclick="closeSteamTitleConverter()">&times;</button>
             <div class="modal-title" id="steamTitleConverterTitle">✏️ Steam 제목 변환기</div>
-            <p class="steam-title-converter-description">Steam 라이브러리에서 확인한 공식 이름입니다. 바꿀 항목만 선택한 뒤 적용하세요.</p>
+            <p class="steam-title-converter-description">Steam 상점의 한국어 이름을 우선 표시합니다. 바꿀 항목만 선택한 뒤 적용하세요.</p>
             <div id="steamTitleConverterList" class="steam-title-converter-list"></div>
             <div class="steam-title-converter-actions">
                 <button type="button" class="action-btn delete-btn" onclick="closeSteamTitleConverter()">취소</button>
-                <button type="button" class="action-btn save-btn" onclick="applySteamTitleConversions()">선택 항목 적용</button>
+                <button type="button" class="action-btn steam-title-converter-apply-btn" onclick="applySteamTitleConversions()">선택 항목 적용</button>
             </div>
         </div>
     </div>

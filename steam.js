@@ -4,6 +4,7 @@
 
 const MIN_STEAM_SYNC_PLAYTIME_MINUTES = 18;
 let pendingSteamTitleChanges = [];
+const steamStoreTitleCache = new Map();
 
 function shouldSyncSteamGame(game) {
     return Number(game?.playtime_forever) >= MIN_STEAM_SYNC_PLAYTIME_MINUTES;
@@ -135,6 +136,21 @@ function loadSteamOwnedGames() {
         });
 }
 
+function getSteamStoreKoreanTitle(steamAppId) {
+    const appId = String(steamAppId || '').trim();
+    if (!/^\d+$/.test(appId)) return Promise.resolve('');
+    if (!steamStoreTitleCache.has(appId)) {
+        const request = fetch(`/api/steam-store-app?appid=${encodeURIComponent(appId)}`)
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                return response.ok && data.available ? String(data.name || '').trim() : '';
+            })
+            .catch(() => '');
+        steamStoreTitleCache.set(appId, request);
+    }
+    return steamStoreTitleCache.get(appId);
+}
+
 async function bulkLinkSteamGames() {
     const button = document.getElementById('bulkSteamLinkButton');
     const steamRecords = localEvents.filter(event => String(event.extendedProps.platform || '').toLocaleLowerCase() === 'steam');
@@ -197,7 +213,7 @@ async function bulkLinkSteamGames() {
     }
 }
 
-// 기존 Steam 기록의 표시 제목을 Steam 라이브러리(API) 이름으로 맞춥니다.
+// 기존 Steam 기록의 표시 제목을 Steam 상점의 한국어 이름으로 맞춥니다.
 // AppID가 이미 연결된 경우를 우선하고, 없는 경우에는 자동 연결과 같은 보수적인 이름 비교만 사용합니다.
 async function normalizeExistingSteamTitles() {
     const button = document.getElementById('normalizeSteamTitlesButton');
@@ -221,7 +237,7 @@ async function normalizeExistingSteamTitles() {
             groups.get(key).push(event);
         });
 
-        const changes = [];
+        const matches = [];
         for (const records of groups.values()) {
             const currentTitle = String(records[0].title || '').trim();
             const currentAppId = String(records[0].extendedProps.steamAppId || '').trim();
@@ -244,16 +260,22 @@ async function normalizeExistingSteamTitles() {
                 if (best && (bestScore === 1 || (bestScore >= 0.92 && bestScore - nextBestScore >= 0.12))) matchedGame = best;
             }
 
-            const officialTitle = String(matchedGame?.name || '').trim();
+            const apiTitle = String(matchedGame?.name || '').trim();
             const appId = String(matchedGame?.appid || currentAppId || '').trim();
-            if (!officialTitle || !appId) continue;
-            const titleChanged = currentTitle !== officialTitle;
-            const appIdLinked = records.some(event => String(event.extendedProps.steamAppId || '') !== appId);
-            if (titleChanged || appIdLinked) changes.push({ records, currentTitle, officialTitle, appId, titleChanged, appIdLinked });
+            if (!apiTitle || !appId) continue;
+            matches.push({ records, currentTitle, apiTitle, appId });
         }
 
+        const changes = (await Promise.all(matches.map(async match => {
+            const koreanStoreTitle = await getSteamStoreKoreanTitle(match.appId);
+            const officialTitle = koreanStoreTitle || match.apiTitle;
+            const titleChanged = match.currentTitle !== officialTitle;
+            const appIdLinked = match.records.some(event => String(event.extendedProps.steamAppId || '') !== match.appId);
+            return titleChanged || appIdLinked ? { ...match, officialTitle, titleChanged, appIdLinked } : null;
+        }))).filter(Boolean);
+
         if (changes.length === 0) {
-            alert('Steam 라이브러리 이름과 다른, 안전하게 확인 가능한 기록이 없습니다.');
+            alert('안전하게 확인 가능한 제목 변경이 없습니다.\n한국어 기록과 영어 API 이름이 달라 연결되지 않는 게임은 상세 화면의 “Steam 게임 연결”에서 해당 상점 주소를 한 번 붙여 넣어 주세요.');
             return;
         }
 
@@ -262,7 +284,7 @@ async function normalizeExistingSteamTitles() {
         alert(`Steam 제목 정리 실패: ${error.message}`);
     } finally {
         button.disabled = false;
-        button.innerText = '✏️ Steam 이름으로 제목 정리';
+        button.innerText = '✏️ Steam 상점 이름으로 제목 정리';
     }
 }
 

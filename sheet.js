@@ -11,7 +11,7 @@ function saveWebAppUrlFromInput() {
         return;
     }
     localStorage.setItem('user_local_web_app_url', urlVal);
-    alert("개인용 실시간 양방향 저장 주소가 브라우저에 안전하게 저장되었습니다! 🔒");
+    alert("구글 시트 저장 주소가 이 브라우저에 저장되었습니다. 🔒");
     document.getElementById('webAppUrlInput').value = urlVal;
 }
 
@@ -26,7 +26,7 @@ function toggleSpreadsheetGuide() {
 function getSavedWebAppUrl() {
     let targetUrl = localStorage.getItem('user_local_web_app_url');
     if (!targetUrl) {
-        alert("먼저 '양방향 저장 연동'에 구글 웹 앱 URL 주소를 저장해 주세요.");
+        alert("먼저 '기록 저장하기'에 구글 웹 앱 URL 주소를 저장해 주세요.");
         return '';
     }
     return targetUrl;
