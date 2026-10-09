@@ -192,10 +192,18 @@ function searchSteamStoreKoreanTitles(title) {
 
 async function findOwnedGameByKoreanStoreTitle(title, gamesByAppId) {
     const storeItems = await searchSteamStoreKoreanTitles(title);
-    const candidates = storeItems
+    // 검색어는 시트에 적힌 한국어 상점명입니다. API의 영어 라이브러리 이름과
+    // 유사도를 비교하면 항상 낮아질 수 있으므로, 먼저 상점 검색 결과와 내 소유
+    // AppID를 대조합니다. 내 라이브러리에 있는 결과가 하나면 안전하게 연결합니다.
+    const candidates = [...new Map(storeItems
         .filter(item => gamesByAppId.has(String(item.appid)))
-        .filter(item => titleSimilarity(title, item.name) >= 0.92);
-    return candidates.length === 1 ? gamesByAppId.get(String(candidates[0].appid)) : null;
+        .map(item => [String(item.appid), item])).values()];
+    if (candidates.length === 1) return gamesByAppId.get(String(candidates[0].appid));
+
+    // 동명·에디션 등 결과가 여러 개인 경우에는 상점 한국어 제목이 정확히 같은
+    // 항목 하나만 자동 연결합니다. 그 외에는 애매한 상태로 남겨 둡니다.
+    const exactCandidates = candidates.filter(item => normalizeSteamTitle(item.name) === normalizeSteamTitle(title));
+    return exactCandidates.length === 1 ? gamesByAppId.get(String(exactCandidates[0].appid)) : null;
 }
 
 async function bulkLinkSteamGames(options = {}) {
@@ -528,7 +536,7 @@ async function normalizeExistingSteamTitles(options = {}) {
         }))).filter(Boolean);
 
         if (changes.length === 0) {
-            if (!silent) alert('안전하게 확인 가능한 제목 변경이 없습니다.\n한국어 기록과 영어 API 이름이 달라 연결되지 않는 게임은 상세 화면의 “Steam 게임 연결”에서 해당 상점 주소를 한 번 붙여 넣어 주세요.');
+            if (!silent) alert('자동으로 확정할 수 있는 제목 변경이 없습니다.\n상점 검색 결과가 여러 개이거나 검색되지 않은 게임은 이번 작업에서 그대로 둡니다. 다른 기록은 변경되지 않습니다.');
             return { changedGames: 0, changedRecords: 0 };
         }
 
