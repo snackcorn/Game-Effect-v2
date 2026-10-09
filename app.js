@@ -138,6 +138,16 @@ function getGameIdentity(gameOrEvent) {
     return `title:${String(game.title || '').trim().toLocaleLowerCase()}`;
 }
 
+function getRecordStartYear(gameOrEvent) {
+    const game = gameOrEvent?.extendedProps || gameOrEvent || {};
+    return String(game.startDate || '').split('-')[0];
+}
+
+function isGameFinished(endingStatus) {
+    const status = String(endingStatus || '').trim();
+    return status === 'o' || status.includes('엔딩') || status.includes('%');
+}
+
 function getSameGameEvents(gameOrEvent) {
     const identity = getGameIdentity(gameOrEvent);
     return localEvents.filter(event => getGameIdentity(event) === identity);
@@ -546,7 +556,8 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
     container.innerHTML = '';
     let sourceList = localEvents;
     
-    if (targetYear) { sourceList = localEvents.filter(evt => evt.extendedProps.startDate.split('-')[0] === targetYear); }
+    // 연도별 요약과 시트 저장은 모두 기록의 시작일을 기준으로 합니다.
+    if (targetYear) { sourceList = localEvents.filter(evt => getRecordStartYear(evt) === targetYear); }
     
     if (titleFilter || dateFilter || steamAppIdFilter) {
         sourceList = sourceList.filter(evt => {
@@ -569,8 +580,8 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
             title: game.title, time: 0, platform: game.platform, hasEnded: false,
             eventId: evt.id, startDate: game.startDate || ''
         };
-        summary.time += game.time;
-        if (game.isEnding && (game.isEnding === 'o' || game.isEnding.includes('엔딩'))) summary.hasEnded = true;
+        summary.time += Number(game.time) || 0;
+        if (isGameFinished(game.isEnding)) summary.hasEnded = true;
         if (game.startDate && (!summary.startDate || game.startDate < summary.startDate)) summary.startDate = game.startDate;
         gameSummaries.set(key, summary);
     });
@@ -613,7 +624,7 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
 }
 
 function calculateYearlyReport(targetYear) {
-    let filteredEvents = localEvents.filter(evt => evt.extendedProps.startDate.split('-')[0] === targetYear);
+    let filteredEvents = localEvents.filter(evt => getRecordStartYear(evt) === targetYear);
     if (filteredEvents.length === 0) {
         document.getElementById('statTotalTime').innerText = '0 시간';
         document.getElementById('statEndingCount').innerText = '0 개';
@@ -627,12 +638,12 @@ function calculateYearlyReport(targetYear) {
     let totalTime = 0; let gameTimeMap = new Map(); let uniqueEndedGamesInYear = new Set(); let latestReviewText = "-"; let maxStartDate = "";
 
     filteredEvents.forEach(evt => {
-        let game = evt.extendedProps; let t = game.time; totalTime += t;
+        let game = evt.extendedProps; let t = Number(game.time) || 0; totalTime += t;
         let key = getGameIdentity(game);
         let summary = gameTimeMap.get(key) || { title: game.title, time: 0 };
         summary.time += t;
         gameTimeMap.set(key, summary);
-        if (game.isEnding && game.isEnding !== 'x') { uniqueEndedGamesInYear.add(key); }
+        if (isGameFinished(game.isEnding)) { uniqueEndedGamesInYear.add(key); }
         if (game.review && game.review.trim() !== '') {
             if (game.startDate > maxStartDate) { maxStartDate = game.startDate; latestReviewText = `[${game.title}] ${game.review}`; }
         }
@@ -722,7 +733,7 @@ function refreshUI() {
     localEvents.forEach(e => {
         let t = e.title.trim();
         if (t && !uniqueTitles.includes(t)) uniqueTitles.push(t);
-        let startY = e.extendedProps.startDate.split('-')[0];
+        let startY = getRecordStartYear(e);
         if (startY && !yearsFound.includes(startY)) yearsFound.push(startY);
     });
 
