@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.17 준비 중</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.16 준비 중</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -200,7 +200,6 @@ function output(data) {
             <h2 class="integration-section-title">🧹 기록 정리 · 제목 정리 · 날짜 재정렬</h2>
             <div class="connection-action-row">
                 <button type="button" class="sync-trigger-btn cleanup-btn" onclick="cleanLocalGameData()">🧹 기록 정리</button>
-                <button type="button" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="mergeSameDaySteamRecords()">➕ 같은 날짜 Steam 기록 합치기</button>
                 <button type="button" id="bulkSteamLinkButton" class="sync-trigger-btn" style="background-color: #7c3aed;" onclick="bulkLinkSteamGames()">🔗 Steam 기록 한꺼번에 연결</button>
                 <button type="button" id="normalizeSteamTitlesButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="normalizeExistingSteamTitles()">✏️ Steam 상점 이름으로 제목 정리</button>
                 <button type="button" class="sync-trigger-btn" style="background-color: #0369a1;" onclick="repairSteamSyncDates()">🗓 Steam 날짜 재정렬</button>
@@ -208,7 +207,6 @@ function output(data) {
             </div>
             <dl class="record-tools-help">
                 <div><dt>🧹 기록 정리</dt><dd>날짜·시간이 잘못된 행과 완전히 같은 중복 행을 제거한 뒤 날짜순으로 정렬하고 시트에도 저장합니다.</dd></div>
-                <div><dt>➕ 같은 날짜 Steam 기록 합치기</dt><dd>같은 Steam AppID·같은 날짜의 하루 기록을 하나로 합칩니다. 시간과 메모를 보존하고, 가장 큰 Steam 누적시간을 유지합니다.</dd></div>
                 <div><dt>🔗 Steam 기록 한꺼번에 연결</dt><dd>제목과 Steam 라이브러리·상점 검색 결과를 비교해 확실한 게임에만 AppID를 연결합니다.</dd></div>
                 <div><dt>✏️ Steam 상점 이름으로 제목 정리</dt><dd>AppID가 확인된 게임의 제목을 Steam 한국어 상점명으로 바꿀 후보를 보여 주며, 선택한 항목만 적용합니다.</dd></div>
                 <div><dt>🗓 Steam 날짜 재정렬</dt><dd>선택한 날짜의 AppID 연결 Steam 기록을 마지막 실행일로 옮깁니다. 마지막 실행일이 없으면 그대로 둡니다.</dd></div>
