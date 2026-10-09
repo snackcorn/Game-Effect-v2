@@ -381,13 +381,14 @@ function openInitialSyncTitleConverter() {
 async function repairSteamSyncDates() {
     const candidates = localEvents.filter(event => {
         const game = event.extendedProps || {};
+        // 마지막 실행일 조회에는 AppID만 필요합니다. 과거 시트 기록처럼
+        // Steam 누적시간이 비어 있는 항목도 AppID가 확인되면 안전하게 재정렬합니다.
         return String(game.platform || '').toLocaleLowerCase() === 'steam'
-            && /^\d+$/.test(String(game.steamAppId || ''))
-            && game.steamTotal !== null && game.steamTotal !== '' && Number.isFinite(Number(game.steamTotal));
+            && /^\d+$/.test(String(game.steamAppId || ''));
     });
     const dates = [...new Set(candidates.map(event => event.extendedProps.startDate).filter(Boolean))].sort();
     if (dates.length === 0) {
-        alert('Steam 날짜를 재정렬할 기록이 없습니다. Steam AppID와 Steam 누적시간이 있는 기록만 처리할 수 있습니다.');
+        alert('Steam 날짜를 재정렬할 기록이 없습니다. Steam AppID가 연결된 기록만 처리할 수 있습니다.');
         return;
     }
     const selectedDate = prompt(`오늘로 몰린 Steam 기록의 날짜를 입력해 주세요.\n가능한 날짜: ${dates.join(', ')}`, dates[dates.length - 1]);
@@ -395,7 +396,7 @@ async function repairSteamSyncDates() {
     const targetDate = selectedDate.trim();
     const targets = candidates.filter(event => event.extendedProps.startDate === targetDate);
     if (targets.length === 0) {
-        alert('해당 날짜의 Steam 누적시간 기록을 찾지 못했습니다.');
+        alert('해당 날짜의 Steam AppID 연결 기록을 찾지 못했습니다.');
         return;
     }
     if (!confirm(`${targetDate}에 몰린 Steam 기록 ${targets.length}개의 날짜를 Steam 마지막 실행일 기준으로 재정렬할까요?\n\n마지막 실행일을 제공하지 않는 게임은 현재 날짜를 유지합니다.`)) return;
