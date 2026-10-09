@@ -8,6 +8,20 @@ function shouldSyncSteamGame(game) {
     return Number(game?.playtime_forever) >= MIN_STEAM_SYNC_PLAYTIME_MINUTES;
 }
 
+function formatLocalDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getSteamLastPlayedDate(lastPlayedTimestamp, fallbackDate) {
+    const timestamp = Number(lastPlayedTimestamp);
+    return Number.isFinite(timestamp) && timestamp > 0
+        ? formatLocalDate(new Date(timestamp * 1000))
+        : fallbackDate;
+}
+
 // 1. SteamID64만 브라우저에 보관합니다. API 키는 Vercel 환경 변수에만 저장됩니다.
 function saveSteamCredentials() {
     const idVal = document.getElementById('steamIdInput').value.trim();
@@ -245,7 +259,7 @@ async function syncRecentSteamPlaytime() {
 
         let updatedCount = 0;
         let skippedShortPlaytimeCount = 0;
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = formatLocalDate(new Date());
 
         for (const game of games) {
             if (!shouldSyncSteamGame(game)) {
@@ -262,6 +276,7 @@ async function syncRecentSteamPlaytime() {
                 ? localEvents.filter(e => String(e.extendedProps.steamAppId || '') === steamAppId)
                 : [];
             const existingRecords = appIdRecords;
+            const isFirstSync = existingRecords.length === 0;
             const recordsWithSteamTotal = existingRecords
                 .filter(record => record.extendedProps.steamTotal !== null && record.extendedProps.steamTotal !== '' && Number.isFinite(Number(record.extendedProps.steamTotal)))
                 .sort((first, second) => {
@@ -276,11 +291,16 @@ async function syncRecentSteamPlaytime() {
             const diffHours = parseFloat((currentTotalSteamHours - recordedTotalHours).toFixed(1));
 
             if (diffHours > 0) {
-                // 동기화할 때마다 하루 기록을 새로 만들어 정확한 증가 시간을 보존합니다.
+                // 첫 동기화는 Steam의 마지막 실행일을, 이후 동기화는 동기화한 날을 기록합니다.
                 const displayName = existingRecords[0]?.title || name;
-                const newGame = createGameObj(displayName, todayStr, todayStr, 'steam', diffHours, 'x', '스팀 동기화 세션', '', false, steamAppId, currentTotalSteamHours);
+                const syncDate = isFirstSync
+                    ? getSteamLastPlayedDate(game.rtime_last_played, todayStr)
+                    : todayStr;
+                const syncMemo = isFirstSync
+                    ? '스팀 최초 동기화 세션 (마지막 실행일 기준)'
+                    : '스팀 동기화 세션';
+                const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours);
                 localEvents.push(newGame);
-                sendDataToGoogleSheet(newGame.extendedProps);
                 updatedCount++;
             }
         }
@@ -288,6 +308,7 @@ async function syncRecentSteamPlaytime() {
         if (updatedCount > 0) {
             refreshUI();
             saveToLocalStorage();
+            syncAllRecordsToGoogleSheet();
             const skippedMessage = skippedShortPlaytimeCount > 0 ? `\n(총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외)` : '';
             alert(`🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!${skippedMessage}`);
         } else {

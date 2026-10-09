@@ -611,6 +611,7 @@ function openDetailModalById(id) {
         let updatedReviewText = this.innerText.trim();
         getSameGameEvents(gameObj).forEach(evt => { evt.extendedProps.review = updatedReviewText; });
         saveToLocalStorage();
+        syncAllRecordsToGoogleSheet();
     };
 
     rebuildTimelineUI(sameGames);
@@ -695,6 +696,7 @@ function submitInstantMemo() {
     }
     refreshUI();
     saveToLocalStorage();
+    syncAllRecordsToGoogleSheet();
     let selectedRecord = localEvents.find(event => event.id === currentSelectedEventId);
     rebuildTimelineUI(selectedRecord ? getSameGameEvents(selectedRecord) : []);
 }
@@ -769,6 +771,7 @@ function saveEditedData() {
     target.backgroundColor = determineEventColor(target.extendedProps);
     
     saveToLocalStorage();
+    syncAllRecordsToGoogleSheet();
     alert("저장되었습니다."); 
     closeGameModal();
 }
@@ -779,6 +782,7 @@ function deleteCurrentGame() {
         recordEditHistory('기록 삭제', deleted?.title || '이름 없음', localEvents, deleted ? [`시작 날짜: ${deleted.extendedProps.startDate}`, `플랫폼: ${deleted.extendedProps.platform}`] : []);
         localEvents = localEvents.filter(e => e.id !== currentSelectedEventId); 
         saveToLocalStorage();
+        syncAllRecordsToGoogleSheet();
         closeGameModal(); 
     } 
 }
@@ -828,6 +832,7 @@ function undoBetaHistory(index) {
         history.splice(index, 1);
         localStorage.setItem('game_effect_edit_history', JSON.stringify(history));
         saveToLocalStorage();
+        syncAllRecordsToGoogleSheet();
         refreshUI();
         renderBetaSettings();
     } catch {
@@ -858,6 +863,25 @@ function resetPlatformColorsToDefaults() {
     });
     saveBetaSettings(settings);
     renderBetaSettings();
+}
+
+function resetAllGameData() {
+    if (!confirm('이 브라우저의 게임 기록을 모두 초기화할까요?\n\n구글 시트의 기록은 삭제되지 않으며, 나중에 다시 가져올 수 있습니다.')) return;
+    if (!confirm('게임 기록, 편집 기록, Steam 게임 연결 정보까지 삭제됩니다. 계속할까요?')) return;
+
+    localEvents = [];
+    uniqueTitles = [];
+    currentSelectedEventId = null;
+    currentSelectedGameTitle = null;
+    localStorage.removeItem('cached_game_events');
+    localStorage.removeItem('game_effect_edit_history');
+    localStorage.removeItem('steam_title_appid_links');
+    document.getElementById('gameForm').reset();
+    renderPlatformOptions('gamePlatform');
+    syncAllRecordsToGoogleSheet();
+    refreshUI();
+    renderBetaSettings();
+    alert('이 브라우저에 저장된 게임 기록 데이터를 초기화했습니다.');
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -932,6 +956,7 @@ document.addEventListener('DOMContentLoaded', function() {
         settings.platforms.push({ name, color: document.getElementById('newPlatformColor').value }); saveBetaSettings(settings); document.getElementById('newPlatformName').value = ''; renderBetaSettings();
     });
     document.getElementById('resetPlatformColorsButton').addEventListener('click', resetPlatformColorsToDefaults);
+    document.getElementById('resetAllGameDataButton').addEventListener('click', resetAllGameData);
 
     window.addEventListener('click', (e) => { 
         if (e.target == modal) { closeGameModal(); }

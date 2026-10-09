@@ -179,6 +179,7 @@ function cleanLocalGameData() {
     uniqueTitles = [];
     refreshUI();
     saveToLocalStorage();
+    syncAllRecordsToGoogleSheet();
     alert(`데이터 정리가 완료되었습니다. ${removedCount}개 기록을 제거했고, ${cleanedEvents.length}개 기록을 유지했습니다.`);
 }
 
@@ -209,6 +210,42 @@ function cleanGoogleDate(val) {
         }
     }
     return str.trim();
+}
+
+function getComparableGameRecords(events) {
+    return events.map(event => {
+        const game = event.extendedProps || event;
+        return {
+            title: String(game.title || event.title || ''), startDate: String(game.startDate || ''), endDate: String(game.endDate || ''),
+            platform: String(game.platform || ''), time: Number(game.time || 0), isEnding: String(game.isEnding || 'x'),
+            memo: String(game.memo || ''), review: String(game.review || ''), steamAppId: String(game.steamAppId || ''),
+            steamTotal: game.steamTotal === null || game.steamTotal === '' || game.steamTotal === undefined ? null : Number(game.steamTotal)
+        };
+    }).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
+function applyIncomingSheetRecords(records, sourceLabel) {
+    const localRecords = getComparableGameRecords(localEvents);
+    const sheetRecords = getComparableGameRecords(records);
+    const isSame = JSON.stringify(localRecords) === JSON.stringify(sheetRecords);
+
+    if (localEvents.length > 0 && !isSame) {
+        const useSheet = confirm(
+            `${sourceLabel} 데이터(${records.length}개)와 이 브라우저의 로컬 데이터(${localEvents.length}개)가 서로 다릅니다.\n\n` +
+            `확인: 시트 데이터를 사용해 로컬 기록을 교체합니다.\n` +
+            `취소: 현재 로컬 기록을 그대로 유지합니다.`
+        );
+        if (!useSheet) {
+            alert('로컬 기록을 유지했습니다. 시트 데이터는 변경하지 않았습니다.');
+            return false;
+        }
+    }
+
+    localEvents = records;
+    uniqueTitles = [];
+    refreshUI();
+    saveToLocalStorage();
+    return true;
 }
 
 function parseCSVTextToRows(text) {
@@ -275,10 +312,7 @@ function parseAndRenderCSV(csvText) {
         let isEndMark = (endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%'));
         parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal));
     }
-    localEvents = parsedEvents;
-    uniqueTitles = [];
-    refreshUI();
-    saveToLocalStorage();
+    applyIncomingSheetRecords(parsedEvents, 'CSV');
 }
 
 window.handleGoogleSheetResponse = function(rawJson) {
@@ -287,8 +321,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
 
     if (!rawJson || !rawJson.table) return;
 
-    localEvents = [];
-    uniqueTitles = [];
+    let parsedEvents = [];
 
     let rows = rawJson.table.rows;
     let cols = rawJson.table.cols.map(c => c.label ? c.label.trim() : '');
@@ -335,11 +368,10 @@ window.handleGoogleSheetResponse = function(rawJson) {
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.toString().includes('엔딩') || endingStatus.toString().includes('%'));
-        localEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal));
+        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal));
     }
 
-    refreshUI();
-    saveToLocalStorage();
+    applyIncomingSheetRecords(parsedEvents, '구글 시트');
 };
 
 window.handleGameRecordsResponse = function(payload) {
@@ -350,8 +382,7 @@ window.handleGameRecordsResponse = function(payload) {
         return;
     }
 
-    localEvents = [];
-    uniqueTitles = [];
+    let parsedEvents = [];
     payload.records.forEach(record => {
         let name = String(record.title || '').trim();
         let startDate = cleanGoogleDate(record.startDate);
@@ -361,10 +392,9 @@ window.handleGameRecordsResponse = function(payload) {
         let isEndMark = endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%');
         let steamTotalText = String(record.steamTotal ?? '').trim();
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
-        localEvents.push(createGameObj(name, startDate, cleanGoogleDate(record.endDate), record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal));
+        parsedEvents.push(createGameObj(name, startDate, cleanGoogleDate(record.endDate), record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal));
     });
-    refreshUI();
-    saveToLocalStorage();
+    applyIncomingSheetRecords(parsedEvents, '구글 시트');
 };
 
 function fetchAllYearTabs(webAppUrl) {
@@ -415,21 +445,19 @@ function forceFetchSpreadsheetData() {
     }
 }
 
-function sendDataToGoogleSheet(gameData) {
+function syncAllRecordsToGoogleSheet() {
     let targetUrl = localStorage.getItem('user_local_web_app_url');
-    if (!targetUrl) return;
-    
-    fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify(gameData)
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.result !== "success") {
-            console.error("구글 시트 전송 실패:", result.message);
-        }
-    })
-    .catch(err => console.error("네트워크 동기화 오류:", err));
+    if (!targetUrl) return Promise.resolve();
+
+    const records = localEvents.map(event => ({ ...event.extendedProps }));
+    return postWebAppData(targetUrl, { action: 'replaceAll', records })
+        .then(result => {
+            if (result.result !== 'success') throw new Error(result.message || '전체 기록 동기화에 실패했습니다.');
+        })
+        .catch(error => console.error('구글 시트 동기화 오류:', error));
+}
+
+function sendDataToGoogleSheet() {
+    return syncAllRecordsToGoogleSheet();
 }
 

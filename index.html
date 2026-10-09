@@ -54,6 +54,7 @@
                 <div><strong>B1</strong><span>시작일</span><small>필수</small></div>
             </div>
             <p>권장 전체 헤더: <code>이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간</code></p>
+            <p class="guide-note">로컬 기록과 시트 기록이 다를 때 <strong>기록 가져오기</strong>를 누르면, 시트 데이터를 사용할지 현재 로컬 기록을 유지할지 확인합니다.</p>
             <div class="spreadsheet-preview" aria-label="스프레드시트 입력 예시">
                 <div class="spreadsheet-preview-title">스프레드시트 입력 예시</div>
                 <div class="spreadsheet-preview-grid">
@@ -88,10 +89,7 @@ function doPost(e) {
 
     if (data.action === 'replaceAll') {
       const records = Array.isArray(data.records) ? data.records : [];
-      const sheet = getYearSheet(new Date().getFullYear());
-      sheet.clearContents();
-      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-      if (records.length) sheet.getRange(2, 1, records.length, HEADERS.length).setValues(records.map(toRow));
+      replaceAllRecords(records);
       return output({ result: 'success', count: records.length });
     }
 
@@ -118,6 +116,26 @@ function getYearSheet(year) {
 
 function toRow(data) {
   return [data.title || '', data.startDate || '', data.endDate || '', data.platform || '', Number(data.time || 0), data.isEnding || 'x', data.memo || '', data.review || '', data.steamAppId || '', data.steamTotal ?? ''];
+}
+
+function replaceAllRecords(records) {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const groups = {};
+  records.forEach(record => {
+    const year = getYear(record.startDate);
+    (groups[year] ||= []).push(record);
+  });
+  spreadsheet.getSheets().forEach(sheet => {
+    if (/^\d{4}$/.test(sheet.getName())) {
+      sheet.clearContents();
+      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    }
+  });
+  Object.keys(groups).forEach(year => {
+    const sheet = getYearSheet(year);
+    const rows = groups[year].map(toRow);
+    if (rows.length) sheet.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
+  });
 }
 
 function doGet(e) {
@@ -193,7 +211,7 @@ function output(data) {
                 <li><strong>SteamID 저장</strong>: SteamID64만 이 브라우저에 저장합니다. API 키는 저장하지 않습니다.</li>
                 <li><strong>Steam 기록 한꺼번에 연결</strong>: AppID가 비어 있는 예전 Steam 기록만 찾아 연결합니다.</li>
                 <li class="steam-help-muted">연결할 Steam 기록이 없습니다: 오류가 아닙니다. 이미 모두 AppID가 연결되어 있거나 Steam 기록이 없다는 뜻입니다.</li>
-                <li class="steam-help-muted">최근 플레이 동기화: 총 0.3시간 이상인 게임의 마지막 기록 이후 증가한 시간만 가져옵니다.</li>
+                <li class="steam-help-muted">최근 플레이 동기화: 첫 동기화는 Steam의 마지막 실행일에, 이후에는 동기화한 날짜에 증가한 시간만 기록합니다.</li>
             </ul>
         </section>
         </div>
@@ -388,7 +406,7 @@ function output(data) {
                 <h2>1. 기본 사용법</h2>
                 <ul>
                     <li><strong>게임 기록하기:</strong> 게임 이름, 플레이 시간, 날짜 등을 입력하고 기록합니다.</li>
-                    <li><strong>최근 플레이 동기화:</strong> Steam 연결 후 누르면 마지막 기록 이후 늘어난 시간만 추가합니다. 총 플레이 시간이 0.3시간 이상인 게임만 가져옵니다.</li>
+                    <li><strong>최근 플레이 동기화:</strong> Steam 연결 후 누르면 마지막 기록 이후 늘어난 시간만 추가합니다. 첫 동기화 날짜는 Steam의 마지막 실행일을 사용하며, 총 플레이 시간이 0.3시간 이상인 게임만 가져옵니다.</li>
                     <li><strong>한줄평:</strong> 게임 전체에 대한 짧은 감상입니다.</li>
                     <li><strong>메모:</strong> 플레이한 날에 남기는 간단한 기록입니다.</li>
                 </ul>
@@ -450,6 +468,11 @@ function output(data) {
                 <h2>최근 편집 기록</h2>
                 <div id="editHistoryList" class="edit-history-list">아직 편집 기록이 없습니다.</div>
                 <p><strong>되돌리기:</strong> 선택한 편집 직전의 전체 기록 상태로 돌아갑니다. 그 편집 이후에 한 추가·수정·삭제도 함께 사라질 수 있으니, 가장 최근 기록부터 되돌리는 것을 권장합니다. 최근 5개까지만 저장됩니다.</p>
+            </section>
+            <section class="settings-section settings-danger-section">
+                <h2>데이터 초기화</h2>
+                <p>이 브라우저에 저장된 게임 기록, 최근 편집 기록, Steam 게임 연결 정보를 삭제합니다. 구글 시트의 기록과 SteamID64·구글 시트 연결 주소는 삭제하지 않습니다.</p>
+                <button type="button" class="data-reset-button" id="resetAllGameDataButton">게임 기록 데이터 초기화</button>
             </section>
             <button type="button" class="settings-save-button" id="saveSettingsButton">설정 저장</button>
         </div>

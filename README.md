@@ -29,6 +29,8 @@
 
 기록은 시작한 날의 연도별 탭(예: `2026`)에 자동으로 저장됩니다. 불러올 때는 모든 연도 탭을 함께 읽습니다.
 
+로컬 기록과 시트 기록이 다를 때 기록을 불러오면, 시트 데이터로 로컬 기록을 교체할지 현재 로컬 기록을 유지할지 선택할 수 있습니다.
+
 시트의 첫 번째 줄에는 아래 항목이 필요합니다.
 
 | 이름 | 시작일 |
@@ -57,20 +59,17 @@ const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
+    if (data.action === 'createTemplate') {
+      getYearSheet(new Date().getFullYear());
+      return json({ result: 'success' });
+    }
+    if (data.action === 'replaceAll') {
+      const records = Array.isArray(data.records) ? data.records : [];
+      replaceAllRecords(records);
+      return json({ result: 'success', count: records.length });
+    }
     const sheet = getYearSheet(getYear(data.startDate));
-
-    sheet.appendRow([
-      data.title || '',
-      data.startDate || '',
-      data.endDate || '',
-      data.platform || '',
-      Number(data.time || 0),
-      data.isEnding || 'x',
-      data.memo || '',
-      data.review || '',
-      data.steamAppId || '',
-      data.steamTotal ?? ''
-    ]);
+    sheet.appendRow(toRow(data));
 
     return json({ result: 'success' });
   } catch (error) {
@@ -89,6 +88,30 @@ function getYearSheet(year) {
   const sheet = spreadsheet.getSheetByName(name) || spreadsheet.insertSheet(name);
   if (sheet.getLastRow() === 0) sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
   return sheet;
+}
+
+function toRow(data) {
+  return [data.title || '', data.startDate || '', data.endDate || '', data.platform || '', Number(data.time || 0), data.isEnding || 'x', data.memo || '', data.review || '', data.steamAppId || '', data.steamTotal ?? ''];
+}
+
+function replaceAllRecords(records) {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const groups = {};
+  records.forEach(record => {
+    const year = getYear(record.startDate);
+    (groups[year] ||= []).push(record);
+  });
+  spreadsheet.getSheets().forEach(sheet => {
+    if (/^\d{4}$/.test(sheet.getName())) {
+      sheet.clearContents();
+      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    }
+  });
+  Object.keys(groups).forEach(year => {
+    const sheet = getYearSheet(year);
+    const rows = groups[year].map(toRow);
+    if (rows.length) sheet.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
+  });
 }
 
 function doGet(e) {
@@ -149,7 +172,7 @@ function jsonp(data, callback) {
 
 ## Steam 연결하기
 
-화면에는 SteamID64만 입력하고 저장합니다. Steam API 키는 Vercel 서버의 환경 변수에만 보관되므로 브라우저나 구글 시트에 저장되지 않습니다. 게임 이름을 입력하면 플레이 시간 계산에 활용할 수 있고, **최근 플레이 동기화**로 새 플레이 시간을 기록할 수 있습니다. 총 플레이 시간이 0.3시간(18분) 미만인 게임은 제외합니다.
+화면에는 SteamID64만 입력하고 저장합니다. Steam API 키는 Vercel 서버의 환경 변수에만 보관되므로 브라우저나 구글 시트에 저장되지 않습니다. 게임 이름을 입력하면 플레이 시간 계산에 활용할 수 있고, **최근 플레이 동기화**로 새 플레이 시간을 기록할 수 있습니다. 처음 동기화하는 게임은 Steam의 마지막 실행일에 기록하며, 이후 동기화는 동기화한 날짜에 기록합니다. 총 플레이 시간이 0.3시간(18분) 미만인 게임은 제외합니다.
 
 ### Vercel 연결하기
 
