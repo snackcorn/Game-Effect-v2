@@ -16,8 +16,13 @@ const DEFAULT_PLATFORM_SETTINGS = [
 function getBetaSettings() {
     try {
         const saved = JSON.parse(localStorage.getItem('game_effect_beta_settings') || '{}');
-        return { platforms: Array.isArray(saved.platforms) ? saved.platforms : DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: saved.calendarBlockStyle || 'merged', themeMode: saved.themeMode || 'dark' };
-    } catch { return { platforms: DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: 'merged', themeMode: 'dark' }; }
+        return {
+            platforms: Array.isArray(saved.platforms) ? saved.platforms : DEFAULT_PLATFORM_SETTINGS,
+            calendarBlockStyle: saved.calendarBlockStyle || 'merged',
+            showSteamTotalOnCalendar: Boolean(saved.showSteamTotalOnCalendar),
+            themeMode: saved.themeMode || 'dark'
+        };
+    } catch { return { platforms: DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: 'merged', showSteamTotalOnCalendar: false, themeMode: 'dark' }; }
 }
 function saveBetaSettings(settings) { localStorage.setItem('game_effect_beta_settings', JSON.stringify(settings)); }
 function recordEditHistory(action, title, snapshot = localEvents, details = []) {
@@ -151,6 +156,93 @@ function isGameFinished(endingStatus) {
 function getSameGameEvents(gameOrEvent) {
     const identity = getGameIdentity(gameOrEvent);
     return localEvents.filter(event => getGameIdentity(event) === identity);
+}
+
+function getMemoEntriesForSteamMerge(event) {
+    const game = event.extendedProps || {};
+    const memo = String(game.memo || '').trim();
+    if (!memo) return [];
+    if (memo.startsWith('[{') && memo.endsWith('}]')) {
+        try {
+            const entries = JSON.parse(memo);
+            if (Array.isArray(entries)) {
+                return entries
+                    .filter(entry => entry && String(entry.text || '').trim())
+                    .map(entry => ({ date: String(entry.date || game.startDate), text: String(entry.text).trim() }));
+            }
+        } catch { /* 일반 메모 형식으로 이어서 처리 */ }
+    }
+    return memo.split('\n').filter(Boolean).map(line => {
+        const matched = line.match(/^\[(.*?)\]\s*(.*)$/);
+        return matched
+            ? { date: matched[1], text: matched[2] }
+            : { date: game.startDate, text: line };
+    }).filter(entry => entry.text.trim());
+}
+
+function mergeSameDaySteamRecords() {
+    const groups = new Map();
+    localEvents.forEach(event => {
+        const game = event.extendedProps || {};
+        const appId = String(game.steamAppId || '').trim();
+        const startDate = String(game.startDate || '');
+        const endDate = String(game.rawEndDate || game.endDate || startDate);
+        const isSingleDaySteamRecord = String(game.platform || '').toLocaleLowerCase() === 'steam'
+            && /^\d+$/.test(appId)
+            && startDate
+            && startDate === endDate;
+        if (!isSingleDaySteamRecord) return;
+        const key = `${appId}\u001F${startDate}`;
+        const records = groups.get(key) || [];
+        records.push(event);
+        groups.set(key, records);
+    });
+
+    const duplicateGroups = [...groups.values()].filter(records => records.length > 1);
+    if (duplicateGroups.length === 0) {
+        alert('합칠 같은 날짜의 Steam 기록이 없습니다. Steam AppID가 연결된 하루 기록만 처리합니다.');
+        return;
+    }
+    const extraRecordCount = duplicateGroups.reduce((count, records) => count + records.length - 1, 0);
+    if (!confirm(`같은 Steam AppID·같은 날짜로 겹친 기록 ${duplicateGroups.length}묶음을 합칠까요?\n\n${extraRecordCount}개 기록이 합쳐집니다. 플레이시간은 더하고, 가장 최신 Steam 누적시간과 기존 메모는 보존합니다.`)) return;
+
+    recordEditHistory('같은 날짜 Steam 기록 합치기', `${duplicateGroups.length}묶음`, localEvents);
+    const removedIds = new Set();
+    duplicateGroups.forEach(records => {
+        const ordered = [...records].sort((left, right) => {
+            const leftTotal = Number(left.extendedProps.steamTotal);
+            const rightTotal = Number(right.extendedProps.steamTotal);
+            const leftHasTotal = Number.isFinite(leftTotal);
+            const rightHasTotal = Number.isFinite(rightTotal);
+            if (leftHasTotal !== rightHasTotal) return Number(rightHasTotal) - Number(leftHasTotal);
+            if (leftHasTotal && leftTotal !== rightTotal) return rightTotal - leftTotal;
+            return Number(right.extendedProps.time || 0) - Number(left.extendedProps.time || 0);
+        });
+        const target = ordered[0];
+        const targetGame = target.extendedProps;
+        const totalTime = records.reduce((sum, event) => sum + (Number(event.extendedProps.time) || 0), 0);
+        const steamTotals = records
+            .map(event => Number(event.extendedProps.steamTotal))
+            .filter(Number.isFinite);
+        const memos = records.flatMap(getMemoEntriesForSteamMerge);
+        const uniqueMemos = [...new Map(memos.map(entry => [`${entry.date}\u001F${entry.text}`, entry])).values()];
+
+        targetGame.time = Number(totalTime.toFixed(1));
+        targetGame.steamTotal = steamTotals.length ? Math.max(...steamTotals) : null;
+        targetGame.isEnding = records.some(event => isGameFinished(event.extendedProps.isEnding)) ? 'o' : targetGame.isEnding;
+        targetGame.memo = uniqueMemos.length ? JSON.stringify(uniqueMemos) : '';
+        targetGame.endDate = '';
+        targetGame.rawEndDate = targetGame.startDate;
+        target.backgroundColor = determineEventColor(targetGame);
+        ordered.slice(1).forEach(event => removedIds.add(event.id));
+    });
+
+    localEvents = localEvents.filter(event => !removedIds.has(event.id));
+    uniqueTitles = [];
+    saveToLocalStorage();
+    refreshUI();
+    syncAllRecordsSafely();
+    alert(`같은 날짜 Steam 기록을 ${duplicateGroups.length}묶음으로 합쳤습니다.`);
 }
 
 function getSmartGameColor(title) {
@@ -984,6 +1076,7 @@ function closeUsageGuide() {
 function renderBetaSettings() {
     const settings = getBetaSettings();
     document.getElementById('calendarBlockStyle').value = settings.calendarBlockStyle;
+    document.getElementById('showSteamTotalOnCalendar').value = String(settings.showSteamTotalOnCalendar);
     document.getElementById('themeMode').value = settings.themeMode;
     document.getElementById('platformSettingsList').innerHTML = settings.platforms.map((item, index) => `<div class="platform-setting-row"><span>${item.name}</span><input type="color" value="${item.color}" data-platform-index="${index}"><button type="button" data-remove-platform="${index}">제거</button></div>`).join('');
     document.getElementById('platformSettingsList').querySelectorAll('[data-remove-platform]').forEach(button => button.addEventListener('click', () => {
@@ -1024,6 +1117,7 @@ function closeSettings() { document.getElementById('settingsModal').style.displa
 function saveSettingsFromModal() {
     const settings = getBetaSettings();
     settings.calendarBlockStyle = document.getElementById('calendarBlockStyle').value;
+    settings.showSteamTotalOnCalendar = document.getElementById('showSteamTotalOnCalendar').value === 'true';
     settings.themeMode = document.getElementById('themeMode').value;
     document.querySelectorAll('[data-platform-index]').forEach(input => { settings.platforms[Number(input.dataset.platformIndex)].color = input.value; });
     saveBetaSettings(settings);
@@ -1088,7 +1182,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (arg.event.extendedProps.hasExactDailySteamTime) {
                 let totalTime = Number(arg.event.extendedProps.displayTotalTime);
                 let dailyIncrease = Number(arg.event.extendedProps.dailyIncrease);
-                textSpan.innerText = `${arg.event.title} (총 ${totalTime.toFixed(1)}h +${dailyIncrease.toFixed(1)}h)`;
+                const totalText = getBetaSettings().showSteamTotalOnCalendar ? ` · 총 ${totalTime.toFixed(1)}h` : '';
+                textSpan.innerText = `${arg.event.title} (+${dailyIncrease.toFixed(1)}h${totalText})`;
             } else {
                 textSpan.innerText = `${arg.event.title} (${Number(arg.event.extendedProps.time || 0).toFixed(1)}h)`;
             }
