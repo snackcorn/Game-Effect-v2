@@ -294,6 +294,33 @@ async function initialCombinedSync() {
     }
 }
 
+function rollbackSteamFirstSyncRecords() {
+    const firstSyncRecords = localEvents.filter(event => String(event.extendedProps.memo || '') === '스팀 최초 동기화 세션 (마지막 실행일 기준)');
+    const dates = [...new Set(firstSyncRecords.map(event => event.extendedProps.startDate).filter(Boolean))].sort();
+    if (dates.length === 0) {
+        alert('되돌릴 Steam 최초 동기화 기록이 없습니다.');
+        return;
+    }
+    const selectedDate = prompt(`되돌릴 Steam 최초 동기화 날짜를 입력해 주세요.\n가능한 날짜: ${dates.join(', ')}`, dates[dates.length - 1]);
+    if (selectedDate === null) return;
+    const targetDate = selectedDate.trim();
+    const targets = firstSyncRecords.filter(event => event.extendedProps.startDate === targetDate);
+    if (targets.length === 0) {
+        alert('해당 날짜의 Steam 최초 동기화 기록을 찾지 못했습니다.');
+        return;
+    }
+    if (!confirm(`${targetDate}에 추가된 Steam 최초 동기화 기록 ${targets.length}개를 삭제할까요?\n\n시트 저장 주소가 설정돼 있으면 삭제 결과도 시트에 반영됩니다.`)) return;
+
+    recordEditHistory('Steam 최초 동기화 되돌리기', `${targetDate} · ${targets.length}개 기록`, localEvents);
+    const targetIds = new Set(targets.map(event => event.id));
+    localEvents = localEvents.filter(event => !targetIds.has(event.id));
+    uniqueTitles = [];
+    saveToLocalStorage();
+    refreshUI();
+    syncAllRecordsSafely();
+    alert(`${targetDate}의 Steam 최초 동기화 기록 ${targets.length}개를 되돌렸습니다.`);
+}
+
 // 기존 Steam 기록의 표시 제목을 Steam 상점의 한국어 이름으로 맞춥니다.
 // AppID가 이미 연결된 경우를 우선하고, 없는 경우에는 자동 연결과 같은 보수적인 이름 비교만 사용합니다.
 async function normalizeExistingSteamTitles() {
@@ -505,6 +532,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let updatedCount = 0;
         let endDateUpdatedCount = 0;
         let skippedShortPlaytimeCount = 0;
+        let skippedUnknownLastPlayedCount = 0;
         const todayStr = formatLocalDate(new Date());
 
         for (const game of games) {
@@ -524,6 +552,12 @@ async function syncRecentSteamPlaytime(options = {}) {
             const existingRecords = appIdRecords;
             const isFirstSync = existingRecords.length === 0;
             const steamLastPlayedDate = getSteamLastPlayedDateOrEmpty(game.rtime_last_played);
+            // 신규 게임은 Steam이 실제 마지막 실행일을 제공하는 경우에만 첫 기록을 만듭니다.
+            // 날짜가 없으면 오늘로 임의 배치하지 않아 달력에 대량 기록이 생기는 것을 막습니다.
+            if (isFirstSync && !steamLastPlayedDate) {
+                skippedUnknownLastPlayedCount++;
+                continue;
+            }
             if (updateLatestRecordEndDateFromSteam(existingRecords, steamLastPlayedDate)) endDateUpdatedCount++;
             const recordsWithSteamTotal = existingRecords
                 .filter(record => record.extendedProps.steamTotal !== null && record.extendedProps.steamTotal !== '' && Number.isFinite(Number(record.extendedProps.steamTotal)))
@@ -557,12 +591,18 @@ async function syncRecentSteamPlaytime(options = {}) {
             refreshUI();
             saveToLocalStorage();
             syncAllRecordsSafely();
-            const skippedMessage = skippedShortPlaytimeCount > 0 ? `\n(총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외)` : '';
+            const skippedMessages = [];
+            if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
+            if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);
+            const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             const endDateMessage = endDateUpdatedCount > 0 ? `\nSteam 마지막 실행일로 종료일을 갱신한 게임: ${endDateUpdatedCount}개` : '';
             const syncMessage = updatedCount > 0 ? `🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!` : 'Steam 마지막 실행일을 기존 기록의 종료일에 반영했습니다.';
             if (!silent) alert(`${syncMessage}${endDateMessage}${skippedMessage}`);
         } else {
-            const skippedMessage = skippedShortPlaytimeCount > 0 ? `\n(총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외)` : '';
+            const skippedMessages = [];
+            if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
+            if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);
+            const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             if (!silent) alert(`이미 모든 스팀 게임의 최신 플레이타임이 반영되어 있습니다! (새로 늘어난 시간 없음)${skippedMessage}`);
         }
         return { updatedCount, endDateUpdatedCount, skippedShortPlaytimeCount };

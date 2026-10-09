@@ -485,10 +485,12 @@ function handleGameSubmit(event) {
 
 function createGameObj(name, start, end, platform, time, endingStatus, memo, review, isCheckEnding = false, steamAppId = '', steamTotal = null) {
     let uniqueId = 'evt_' + Math.random().toString(36).substr(2, 9);
-    let displayEnd = end === start ? '' : end; 
+    // 시트에 종료일이 없으면 시작일 하루짜리 기록으로 처리합니다.
+    let normalizedEnd = end || start;
+    let displayEnd = normalizedEnd === start ? '' : normalizedEnd; 
     
     let gameObj = {
-        id: uniqueId, title: name, startDate: start, endDate: displayEnd, rawEndDate: end,     
+        id: uniqueId, title: name, startDate: start, endDate: displayEnd, rawEndDate: normalizedEnd,
         platform: platform, time: parseFloat(time || 0), isEnding: endingStatus, memo: memo || '', review: review || '',
         steamAppId: String(steamAppId || (String(platform).toLocaleLowerCase() === 'steam' ? getSteamAppIdForTitle(name) : '')),
         steamTotal: steamTotal !== null && steamTotal !== '' && Number.isFinite(Number(steamTotal)) ? Number(steamTotal) : null
