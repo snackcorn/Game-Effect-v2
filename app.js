@@ -5,6 +5,7 @@ let localEvents = [];
 let uniqueTitles = []; 
 let currentSelectedEventId = null;
 let currentSelectedGameTitle = ""; 
+let isAllRecordsDetailMode = false;
 let calendar = null;
 let shortPlaytimeCollapseScheduled = false;
 let calendarHoverCard = null;
@@ -623,7 +624,7 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
             <div class="card-info" style="font-size: 1.1em; margin-top: 10px;">⏱ ${timeLabelText}: <span style="color:#818cf8; font-size:1.2em;">${aggregatedTime.toFixed(1)}</span> 시간</div>
             ${startInfoHTML}
         `;
-        card.addEventListener('click', () => { openDetailModalById(summary.eventId); });
+        card.addEventListener('click', () => { openDetailModalById(summary.eventId, { showAllRecords: !targetYear }); });
         container.appendChild(card);
     }
 }
@@ -761,24 +762,51 @@ function refreshUI() {
     renderTopGames();
 }
 
-function openDetailModalById(id) {
+function openDetailModalById(id, options = {}) {
     let targetEvent = localEvents.find(e => e.id === id);
     if (!targetEvent) return;
-    
+
     let gameObj = targetEvent.extendedProps;
-    currentSelectedEventId = id;
-    currentSelectedGameTitle = gameObj.title;
-    
     let sameGames = getSameGameEvents(gameObj);
-    let totalAggTime = sameGames.reduce((acc, curr) => acc + curr.extendedProps.time, 0);
+    const showAllRecords = Boolean(options.showAllRecords);
+    isAllRecordsDetailMode = showAllRecords;
+    if (showAllRecords) {
+        targetEvent = [...sameGames].sort((left, right) => {
+            const leftDate = String(left.extendedProps.rawEndDate || left.extendedProps.endDate || left.extendedProps.startDate || '');
+            const rightDate = String(right.extendedProps.rawEndDate || right.extendedProps.endDate || right.extendedProps.startDate || '');
+            return rightDate.localeCompare(leftDate) || right.id.localeCompare(left.id);
+        })[0];
+        gameObj = targetEvent.extendedProps;
+    }
+    currentSelectedEventId = targetEvent.id;
+    currentSelectedGameTitle = gameObj.title;
+    const totalAggTime = sameGames.reduce((acc, curr) => acc + (Number(curr.extendedProps.time) || 0), 0);
+    const firstStartDate = sameGames.reduce((first, event) => {
+        const date = String(event.extendedProps.startDate || '');
+        return !first || (date && date < first) ? date : first;
+    }, '');
+    const lastRecordedDate = sameGames.reduce((last, event) => {
+        const date = String(event.extendedProps.rawEndDate || event.extendedProps.endDate || event.extendedProps.startDate || '');
+        return date > last ? date : last;
+    }, '');
+    const platforms = [...new Set(sameGames.map(event => String(event.extendedProps.platform || '').trim()).filter(Boolean))];
+    const hasEnded = sameGames.some(event => isGameFinished(event.extendedProps.isEnding));
     
     document.getElementById('modalInfoGrid').style.display = 'grid';
-    document.getElementById('modalGameTitle').innerHTML = gameObj.title;
-    document.getElementById('modalGameTimeZone').innerHTML = `<span id="modalGameTime">${gameObj.time.toFixed(1)}</span> 시간 (전체 누적합: ${totalAggTime.toFixed(1)}h)`;
-    document.getElementById('modalGameStartZone').innerHTML = `<span id="modalGameStart">${gameObj.startDate}</span>`;
-    document.getElementById('modalGameEndZone').innerHTML = `<span id="modalGameEnd">${gameObj.endDate ? gameObj.endDate : '진행 중'}</span>`;
-    document.getElementById('modalGameTrophyZone').innerHTML = `<span id="modalGameTrophy">${gameObj.isEnding && gameObj.isEnding !== 'x' ? '🏆 엔딩 완료' : '진행 중'}</span>`;
-    document.getElementById('modalGamePlatformZone').innerHTML = `<span id="modalGamePlatform">${gameObj.platform}</span>`;
+    const modeNotice = document.getElementById('modalDetailModeNotice');
+    modeNotice.style.display = showAllRecords ? 'block' : 'none';
+    if (showAllRecords) modeNotice.textContent = `모든 기록 ${sameGames.length}개를 합친 게임 전체 정보입니다.`;
+    document.getElementById('modalGameTitle').innerHTML = showAllRecords ? `${gameObj.title} <small>모든 기록</small>` : gameObj.title;
+    document.getElementById('modalGameTimeLabel').textContent = showAllRecords ? '⏱️ 전체 누적 플레이타임' : '⏱️ 플레이타임';
+    document.getElementById('modalGameStartLabel').textContent = showAllRecords ? '📅 처음 기록한 날' : '📅 시작한 날';
+    document.getElementById('modalGameEndLabel').textContent = showAllRecords ? '📅 마지막 기록한 날' : '📅 끝낸 날';
+    document.getElementById('modalGameTimeZone').innerHTML = showAllRecords
+        ? `<span id="modalGameTime">${totalAggTime.toFixed(1)}</span> 시간`
+        : `<span id="modalGameTime">${Number(gameObj.time || 0).toFixed(1)}</span> 시간 (전체 누적합: ${totalAggTime.toFixed(1)}h)`;
+    document.getElementById('modalGameStartZone').innerHTML = `<span id="modalGameStart">${showAllRecords ? firstStartDate : gameObj.startDate}</span>`;
+    document.getElementById('modalGameEndZone').innerHTML = `<span id="modalGameEnd">${showAllRecords ? lastRecordedDate : (gameObj.endDate || '진행 중')}</span>`;
+    document.getElementById('modalGameTrophyZone').innerHTML = `<span id="modalGameTrophy">${(showAllRecords ? hasEnded : isGameFinished(gameObj.isEnding)) ? '🏆 엔딩 완료' : '진행 중'}</span>`;
+    document.getElementById('modalGamePlatformZone').innerHTML = `<span id="modalGamePlatform">${showAllRecords ? platforms.join(', ') : gameObj.platform}</span>`;
     document.getElementById('modalSteamLinkZone').innerHTML = gameObj.steamAppId
         ? `연결됨 (AppID: ${gameObj.steamAppId})`
         : '아직 연결하지 않았습니다.';
@@ -890,8 +918,12 @@ function enableEditMode() {
     document.getElementById('btnSteamLink').style.display = 'none';
     document.getElementById('modalGameTitle').innerHTML = `<input type="text" id="editTitle" class="edit-input" value="${gameObj.title}">`;
     document.getElementById('modalGameTimeZone').innerHTML = `<input type="number" step="0.1" id="editTime" class="edit-input" value="${gameObj.time}"> 시간`;
-    document.getElementById('modalGameStartZone').innerHTML = `<input type="text" id="editStart" class="edit-input" value="${gameObj.startDate}">`;
-    document.getElementById('modalGameEndZone').innerHTML = `<input type="text" id="editEnd" class="edit-input" value="${gameObj.endDate}">`;
+    document.getElementById('modalGameStartZone').innerHTML = isAllRecordsDetailMode
+        ? `<span id="editStart">${gameObj.startDate}</span><small> 모든 기록에서는 날짜를 수정할 수 없습니다.</small>`
+        : `<input type="text" id="editStart" class="edit-input" value="${gameObj.startDate}">`;
+    document.getElementById('modalGameEndZone').innerHTML = isAllRecordsDetailMode
+        ? `<span id="editEnd">${gameObj.endDate || '진행 중'}</span><small> 모든 기록에서는 날짜를 수정할 수 없습니다.</small>`
+        : `<input type="text" id="editEnd" class="edit-input" value="${gameObj.endDate}">`;
     
     document.getElementById('modalGameTrophyZone').innerHTML = `
         <select id="editEnding" class="edit-input">
@@ -911,7 +943,8 @@ function enableEditMode() {
 function saveEditedData() {
     let target = localEvents.find(e => e.id === currentSelectedEventId); if (!target) return;
     let newTitle = document.getElementById('editTitle').value.trim(); let newTime = parseFloat(document.getElementById('editTime').value || 0);
-    let newStart = getValidatedDate(document.getElementById('editStart').value); let newEnd = getValidatedDate(document.getElementById('editEnd').value);
+    let newStart = isAllRecordsDetailMode ? target.extendedProps.startDate : getValidatedDate(document.getElementById('editStart').value);
+    let newEnd = isAllRecordsDetailMode ? (target.extendedProps.endDate || '') : getValidatedDate(document.getElementById('editEnd').value);
 
     if (!newTitle || !Number.isFinite(newTime) || newStart === null || !newStart || newEnd === null) {
         alert("게임 이름, 플레이 시간, 시작 날짜을 올바르게 입력해 주세요.");
