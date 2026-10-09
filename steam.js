@@ -384,7 +384,8 @@ async function initialCombinedSync() {
             const syncResult = await syncRecentSteamPlaytime({
                 silent: true,
                 ownedGames,
-                onlyExistingLinkedRecords: true
+                onlyExistingLinkedRecords: true,
+                useLastPlayedDateForSheetRemainder: true
             });
             openInitialSyncNextSteps({
                 unresolvedTitles: stillUnlinkedTitles,
@@ -396,8 +397,8 @@ async function initialCombinedSync() {
         }
 
         button.innerText = '⏳ Steam 최신 정보 반영 중...';
-        const syncResult = await syncRecentSteamPlaytime({ silent: true, ownedGames });
-        alert(`통합 초기 동기화 완료\n\n시트 기록을 Steam 상점 제목으로 먼저 통일한 뒤 불러왔습니다.\n입력 전 AppID 연결: ${incomingResult.linkedTitles}개\n입력 전 제목 통일: ${incomingResult.renamedTitles}개\n추가 Steam 연결: ${linkResult?.linkedTitles || 0}개\n추가 제목 정리: ${titleResult?.changedGames || 0}개\n새 플레이 기록: ${syncResult?.updatedCount || 0}개`);
+        const syncResult = await syncRecentSteamPlaytime({ silent: true, ownedGames, useLastPlayedDateForSheetRemainder: true });
+        alert(`통합 초기 동기화 완료\n\n시트 기록을 Steam 상점 제목으로 먼저 통일한 뒤 불러왔습니다.\n입력 전 AppID 연결: ${incomingResult.linkedTitles}개\n입력 전 제목 통일: ${incomingResult.renamedTitles}개\n추가 Steam 연결: ${linkResult?.linkedTitles || 0}개\n추가 제목 정리: ${titleResult?.changedGames || 0}개\n새 플레이 기록: ${syncResult?.updatedCount || 0}개\n마지막 실행일에 추가한 남은 시간: ${syncResult?.lastPlayedRemainderCount || 0}개`);
     } catch (error) {
         alert(`통합 초기 동기화 실패: ${error.message}`);
     } finally {
@@ -751,6 +752,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let skippedShortPlaytimeCount = 0;
         let skippedUnknownLastPlayedCount = 0;
         let skippedUnlinkedRecordCount = 0;
+        let lastPlayedRemainderCount = 0;
         const todayStr = formatLocalDate(new Date());
 
         for (const game of games) {
@@ -796,17 +798,28 @@ async function syncRecentSteamPlaytime(options = {}) {
             const diffHours = parseFloat((currentTotalSteamHours - recordedTotalHours).toFixed(1));
 
             if (diffHours > 0) {
-                // 첫 동기화는 Steam의 마지막 실행일을, 이후 동기화는 동기화한 날을 기록합니다.
+                // 통합 최초 불러오기에서는 시트에 이미 적힌 시간을 먼저 유지하고,
+                // Steam 누적시간과의 차이만 마지막 실행일에 별도 기록합니다.
                 const displayName = existingRecords[0]?.title || name;
-                const syncDate = isFirstSync
+                const hasSheetEndDate = existingRecords.some(record => Boolean(record.extendedProps.endDate));
+                const useLastPlayedForRemainder = Boolean(
+                    options.useLastPlayedDateForSheetRemainder
+                    && !isFirstSync
+                    && hasSheetEndDate
+                    && steamLastPlayedDate
+                );
+                const syncDate = (isFirstSync || useLastPlayedForRemainder)
                     ? getSteamLastPlayedDate(game.rtime_last_played, todayStr)
                     : todayStr;
                 const syncMemo = isFirstSync
                     ? '스팀 최초 동기화 세션 (마지막 실행일 기준)'
+                    : useLastPlayedForRemainder
+                        ? '시트 기록 이후 Steam 잔여 시간 (마지막 실행일 기준)'
                     : '스팀 동기화 세션';
                 const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours);
                 localEvents.push(newGame);
                 updatedCount++;
+                if (useLastPlayedForRemainder) lastPlayedRemainderCount++;
             }
         }
 
@@ -827,7 +840,7 @@ async function syncRecentSteamPlaytime(options = {}) {
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             if (!silent) alert(`이미 모든 스팀 게임의 최신 플레이타임이 반영되어 있습니다! (새로 늘어난 시간 없음)${skippedMessage}`);
         }
-        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount };
+        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, lastPlayedRemainderCount };
     } catch (error) {
         if (silent) throw error;
         alert(`스팀 연동 실패: ${error.message}`);

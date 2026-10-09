@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.2 준비 중</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.3 준비 중</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -235,7 +235,7 @@ function output(data) {
                 <li class="steam-help-muted">연결할 Steam 기록이 없습니다: 오류가 아닙니다. 이미 AppID가 연결됐거나 Steam 플랫폼 기록이 없다는 뜻입니다.</li>
             </ul>
             <h3>최근 플레이 동기화</h3>
-            <p>총 플레이 시간이 0.3시간(18분) 이상인 게임만 가져옵니다. AppID가 연결된 기존 기록은 Steam 누적 시간과 비교하여 <strong>새로 늘어난 시간만</strong> 추가합니다. 기존 시트 기록의 종료일은 Steam 마지막 실행일로 바꾸지 않습니다. 첫 동기화는 Steam의 실제 마지막 실행일이 있는 게임만 기록하며, 날짜 정보가 없는 게임은 오늘 날짜로 임의 추가하지 않고 건너뜁니다.</p>
+            <p>총 플레이 시간이 0.3시간(18분) 이상인 게임만 가져옵니다. AppID가 연결된 기존 기록은 Steam 누적 시간과 비교하여 <strong>새로 늘어난 시간만</strong> 추가합니다. 통합 최초 불러오기에서 시트 종료일과 Steam 마지막 실행일이 있으면 시트 시간을 먼저 유지하고, 남은 시간은 Steam 마지막 실행일에 따로 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</p>
         </section>
         </div>
     </details>
@@ -429,7 +429,7 @@ function output(data) {
                 <h2>1. 기본 사용법</h2>
                 <ul>
                     <li><strong>게임 기록하기:</strong> 게임 이름, 플레이 시간, 날짜 등을 입력하고 기록합니다.</li>
-                    <li><strong>최근 플레이 동기화:</strong> SteamID64를 저장한 뒤 누르면 AppID별로 누적 시간을 비교해 늘어난 시간만 추가합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다. 첫 기록 날짜는 마지막 실행일이며, 18분 미만 게임은 제외됩니다.</li>
+                    <li><strong>최근 플레이 동기화:</strong> SteamID64를 저장한 뒤 누르면 AppID별로 누적 시간을 비교해 늘어난 시간만 추가합니다. 통합 최초 불러오기에서는 시트에 적힌 시간을 먼저 유지하고 남은 시간만 Steam 마지막 실행일에 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</li>
                     <li><strong>달력 정보:</strong> Steam AppID가 연결된 게임에 마우스를 올리면 가능한 경우 썸네일·누적 플레이시간·업적 진행도를 봅니다. 정보를 가져올 수 없으면 해당 항목은 표시하지 않습니다.</li>
                     <li><strong>한줄평:</strong> 게임 전체에 대한 짧은 감상입니다.</li>
                     <li><strong>메모:</strong> 플레이한 날에 남기는 간단한 기록입니다.</li>
