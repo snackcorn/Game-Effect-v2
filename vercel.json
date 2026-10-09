@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/steam-owned-games.js": {
+      "maxDuration": 10
+    }
+  }
+}
