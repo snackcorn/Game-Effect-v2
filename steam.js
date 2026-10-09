@@ -32,22 +32,6 @@ function getSteamLastPlayedDateOrEmpty(lastPlayedTimestamp) {
         : '';
 }
 
-// 같은 AppID의 기존 기록 중 가장 최근 종료일만 Steam 마지막 실행일에 맞춰 연장합니다.
-function updateLatestRecordEndDateFromSteam(records, steamLastPlayedDate) {
-    if (!steamLastPlayedDate || records.length === 0) return false;
-    const latestRecord = records.reduce((latest, record) => {
-        const latestDate = latest.extendedProps.rawEndDate || latest.extendedProps.endDate || latest.extendedProps.startDate || '';
-        const recordDate = record.extendedProps.rawEndDate || record.extendedProps.endDate || record.extendedProps.startDate || '';
-        return recordDate > latestDate ? record : latest;
-    });
-    const currentEndDate = latestRecord.extendedProps.rawEndDate || latestRecord.extendedProps.endDate || latestRecord.extendedProps.startDate || '';
-    if (steamLastPlayedDate <= currentEndDate) return false;
-
-    latestRecord.extendedProps.rawEndDate = steamLastPlayedDate;
-    latestRecord.extendedProps.endDate = steamLastPlayedDate === latestRecord.extendedProps.startDate ? '' : steamLastPlayedDate;
-    return true;
-}
-
 // 1. SteamID64만 브라우저에 보관합니다. API 키는 Vercel 환경 변수에만 저장됩니다.
 function saveSteamCredentials() {
     const idVal = document.getElementById('steamIdInput').value.trim();
@@ -280,6 +264,69 @@ async function bulkLinkSteamGames(options = {}) {
     }
 }
 
+// 통합 최초 불러오기에서는 화면·로컬 저장소에 넣기 전에 Steam 상점 제목으로 통일합니다.
+// 확정할 수 없는 제목은 건드리지 않아 잘못된 게임으로 합쳐지지 않습니다.
+async function normalizeIncomingSteamSheetRecords(records, ownedGames) {
+    const gamesByAppId = new Map(ownedGames.map(game => [String(game.appid || ''), game]));
+    const groups = new Map();
+    records.forEach(record => {
+        const game = record.extendedProps || {};
+        if (String(game.platform || '').toLocaleLowerCase() !== 'steam') return;
+        const key = String(record.title || game.title || '').trim();
+        if (!key) return;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(record);
+    });
+
+    let linkedTitles = 0;
+    let renamedTitles = 0;
+    const unresolvedTitles = [];
+    for (const [title, group] of groups) {
+        const existingAppId = String(group[0].extendedProps.steamAppId || '').trim();
+        let matchedGame = existingAppId ? gamesByAppId.get(existingAppId) : null;
+
+        if (!matchedGame) {
+            let best = null;
+            let bestScore = -1;
+            let nextBestScore = -1;
+            ownedGames.forEach(game => {
+                const score = titleSimilarity(title, game.name);
+                if (score > bestScore) {
+                    nextBestScore = bestScore;
+                    bestScore = score;
+                    best = game;
+                } else if (score > nextBestScore) {
+                    nextBestScore = score;
+                }
+            });
+            if (best && (bestScore === 1 || (bestScore >= 0.92 && bestScore - nextBestScore >= 0.12))) {
+                matchedGame = best;
+            } else {
+                matchedGame = await findOwnedGameByKoreanStoreTitle(title, gamesByAppId);
+            }
+        }
+
+        if (!matchedGame) {
+            unresolvedTitles.push(title);
+            continue;
+        }
+
+        const appId = String(matchedGame.appid || '');
+        const officialTitle = await getSteamStoreKoreanTitle(appId) || String(matchedGame.name || title);
+        const changedTitle = officialTitle !== title;
+        group.forEach(record => {
+            record.title = officialTitle;
+            record.extendedProps.title = officialTitle;
+            record.extendedProps.steamAppId = appId;
+        });
+        saveSteamTitleLink(title, appId);
+        saveSteamTitleLink(officialTitle, appId);
+        linkedTitles++;
+        if (changedTitle) renamedTitles++;
+    }
+    return { records, linkedTitles, renamedTitles, unresolvedTitles };
+}
+
 // 처음 연결할 때 시트 기록을 먼저 기준 데이터로 가져온 뒤 Steam 정보를 안전하게 반영합니다.
 async function initialCombinedSync() {
     const button = document.getElementById('initialCombinedSyncButton');
@@ -305,10 +352,18 @@ async function initialCombinedSync() {
     button.innerText = '⏳ 시트와 Steam 불러오는 중...';
     try {
         localStorage.setItem('saved_game_sheet_url', sheetUrl);
-        const [appliedSheetRecords, ownedGames] = await Promise.all([
+        const [sheetRecords, ownedGames] = await Promise.all([
             fetchAllYearTabsForInitialSync(webAppUrl),
             loadSteamOwnedGames()
         ]);
+        if (!sheetRecords) {
+            alert('시트 기록을 읽지 못해 통합 동기화를 중단했습니다.');
+            return;
+        }
+
+        button.innerText = '⏳ Steam 상점 제목 통일 중...';
+        const incomingResult = await normalizeIncomingSteamSheetRecords(sheetRecords, ownedGames);
+        const appliedSheetRecords = applyIncomingSheetRecords(incomingResult.records, '구글 시트');
         if (!appliedSheetRecords) {
             alert('시트 기록을 로컬에 적용하지 않아 통합 동기화를 중단했습니다.');
             return;
@@ -342,7 +397,7 @@ async function initialCombinedSync() {
 
         button.innerText = '⏳ Steam 최신 정보 반영 중...';
         const syncResult = await syncRecentSteamPlaytime({ silent: true, ownedGames });
-        alert(`통합 초기 동기화 완료\n\n시트와 Steam 라이브러리를 함께 불러왔습니다.\nSteam AppID 연결: ${linkResult?.linkedTitles || 0}개\nSteam 상점 이름 제목 정리: ${titleResult?.changedGames || 0}개\n새 플레이 기록: ${syncResult?.updatedCount || 0}개\n종료일 갱신: ${syncResult?.endDateUpdatedCount || 0}개`);
+        alert(`통합 초기 동기화 완료\n\n시트 기록을 Steam 상점 제목으로 먼저 통일한 뒤 불러왔습니다.\n입력 전 AppID 연결: ${incomingResult.linkedTitles}개\n입력 전 제목 통일: ${incomingResult.renamedTitles}개\n추가 Steam 연결: ${linkResult?.linkedTitles || 0}개\n추가 제목 정리: ${titleResult?.changedGames || 0}개\n새 플레이 기록: ${syncResult?.updatedCount || 0}개`);
     } catch (error) {
         alert(`통합 초기 동기화 실패: ${error.message}`);
     } finally {
@@ -693,7 +748,6 @@ async function syncRecentSteamPlaytime(options = {}) {
         }
 
         let updatedCount = 0;
-        let endDateUpdatedCount = 0;
         let skippedShortPlaytimeCount = 0;
         let skippedUnknownLastPlayedCount = 0;
         let skippedUnlinkedRecordCount = 0;
@@ -728,7 +782,6 @@ async function syncRecentSteamPlaytime(options = {}) {
                 skippedUnknownLastPlayedCount++;
                 continue;
             }
-            if (updateLatestRecordEndDateFromSteam(existingRecords, steamLastPlayedDate)) endDateUpdatedCount++;
             const recordsWithSteamTotal = existingRecords
                 .filter(record => record.extendedProps.steamTotal !== null && record.extendedProps.steamTotal !== '' && Number.isFinite(Number(record.extendedProps.steamTotal)))
                 .sort((first, second) => {
@@ -757,7 +810,7 @@ async function syncRecentSteamPlaytime(options = {}) {
             }
         }
 
-        if (updatedCount > 0 || endDateUpdatedCount > 0) {
+        if (updatedCount > 0) {
             refreshUI();
             saveToLocalStorage();
             syncAllRecordsSafely();
@@ -765,9 +818,8 @@ async function syncRecentSteamPlaytime(options = {}) {
             if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
             if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
-            const endDateMessage = endDateUpdatedCount > 0 ? `\nSteam 마지막 실행일로 종료일을 갱신한 게임: ${endDateUpdatedCount}개` : '';
-            const syncMessage = updatedCount > 0 ? `🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!` : 'Steam 마지막 실행일을 기존 기록의 종료일에 반영했습니다.';
-            if (!silent) alert(`${syncMessage}${endDateMessage}${skippedMessage}`);
+            const syncMessage = `🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!`;
+            if (!silent) alert(`${syncMessage}${skippedMessage}`);
         } else {
             const skippedMessages = [];
             if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
@@ -775,7 +827,7 @@ async function syncRecentSteamPlaytime(options = {}) {
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
             if (!silent) alert(`이미 모든 스팀 게임의 최신 플레이타임이 반영되어 있습니다! (새로 늘어난 시간 없음)${skippedMessage}`);
         }
-        return { updatedCount, endDateUpdatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount };
+        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount };
     } catch (error) {
         if (silent) throw error;
         alert(`스팀 연동 실패: ${error.message}`);

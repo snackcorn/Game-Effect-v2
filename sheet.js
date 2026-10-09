@@ -224,7 +224,41 @@ function getComparableGameRecords(events) {
     }).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
 }
 
+function getIncomingRecordTotal(record) {
+    const game = record.extendedProps || record || {};
+    const steamTotal = Number(game.steamTotal);
+    if (game.steamTotal !== null && game.steamTotal !== '' && Number.isFinite(steamTotal)) return steamTotal;
+    const time = Number(game.time);
+    return Number.isFinite(time) ? time : 0;
+}
+
+// 시트에 같은 제목이 여러 행으로 있는 경우, 누적 시간이 가장 큰 행 하나만 사용합니다.
+// Steam 제목 통일 후에도 다시 실행되므로 한국어/영어로 겹친 행도 한 번에 정리됩니다.
+function deduplicateIncomingSheetRecords(records) {
+    const bestByTitle = new Map();
+    records.forEach(record => {
+        const game = record.extendedProps || record || {};
+        const titleKey = String(game.title || record.title || '').trim().toLocaleLowerCase();
+        if (!titleKey) return;
+        const current = bestByTitle.get(titleKey);
+        if (!current) {
+            bestByTitle.set(titleKey, record);
+            return;
+        }
+
+        const candidateTotal = getIncomingRecordTotal(record);
+        const currentTotal = getIncomingRecordTotal(current);
+        const candidateHasAppId = /^\d+$/.test(String((record.extendedProps || record).steamAppId || ''));
+        const currentHasAppId = /^\d+$/.test(String((current.extendedProps || current).steamAppId || ''));
+        if (candidateTotal > currentTotal || (candidateTotal === currentTotal && candidateHasAppId && !currentHasAppId)) {
+            bestByTitle.set(titleKey, record);
+        }
+    });
+    return [...bestByTitle.values()];
+}
+
 function applyIncomingSheetRecords(records, sourceLabel) {
+    records = deduplicateIncomingSheetRecords(records);
     const localRecords = getComparableGameRecords(localEvents);
     const sheetRecords = getComparableGameRecords(records);
     const isSame = JSON.stringify(localRecords) === JSON.stringify(sheetRecords);
@@ -288,7 +322,7 @@ function parseAndRenderCSV(csvText) {
     let steamAppIdIdx = cols.indexOf('Steam AppID');
     let steamTotalIdx = cols.indexOf('Steam 누적시간');
 
-    if (nameIdx === -1 || startIdx === -1) return;
+    if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) return;
 
     for (let i = 1; i < allRows.length; i++) {
         let row = allRows[i].map(r => r.trim().replace(/^"|"$/g, ''));
@@ -306,7 +340,7 @@ function parseAndRenderCSV(csvText) {
         let steamTotalText = steamTotalIdx !== -1 ? String(row[steamTotalIdx] || '').trim() : '';
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
 
-        if (!name || !startDate) continue;
+        if (!name || (!startDate && !endDate)) continue;
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%'));
@@ -344,7 +378,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
     let steamAppIdIdx = cols.indexOf('Steam AppID');
     let steamTotalIdx = cols.indexOf('Steam 누적시간');
 
-    if (nameIdx === -1 || startIdx === -1) return;
+    if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) return;
 
     let startIndex = isHeaderInRows ? 1 : 0;
 
@@ -364,7 +398,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
         let steamTotalText = steamTotalIdx !== -1 && row[steamTotalIdx]?.v !== undefined ? String(row[steamTotalIdx].v).trim() : '';
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
 
-        if (!name || !startDate) continue;
+        if (!name || (!startDate && !endDate)) continue;
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.toString().includes('엔딩') || endingStatus.toString().includes('%'));
@@ -374,26 +408,32 @@ window.handleGoogleSheetResponse = function(rawJson) {
     applyIncomingSheetRecords(parsedEvents, '구글 시트');
 };
 
-window.handleGameRecordsResponse = function(payload) {
-    let oldScript = document.getElementById('game-records-jsonp-script');
-    if (oldScript) oldScript.remove();
-    if (!payload || payload.result !== 'success' || !Array.isArray(payload.records)) {
-        alert(`시트를 불러오지 못했습니다. ${payload?.message || '기존 기록은 유지됩니다.'}`);
-        return false;
-    }
-
+function parseGameRecordsPayload(payload) {
+    if (!payload || payload.result !== 'success' || !Array.isArray(payload.records)) return null;
     let parsedEvents = [];
     payload.records.forEach(record => {
         let name = String(record.title || '').trim();
         let startDate = cleanGoogleDate(record.startDate);
-        if (!name || !startDate) return;
+        let endDate = cleanGoogleDate(record.endDate);
+        if (!name || (!startDate && !endDate)) return;
         let endingStatus = String(record.isEnding || 'x');
         let memo = record.memo === '기록된 메모가 없습니다.' || record.memo === '-' ? '' : (record.memo || '');
         let isEndMark = endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%');
         let steamTotalText = String(record.steamTotal ?? '').trim();
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
-        parsedEvents.push(createGameObj(name, startDate, cleanGoogleDate(record.endDate), record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal));
+        parsedEvents.push(createGameObj(name, startDate, endDate, record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal));
     });
+    return parsedEvents;
+}
+
+window.handleGameRecordsResponse = function(payload) {
+    let oldScript = document.getElementById('game-records-jsonp-script');
+    if (oldScript) oldScript.remove();
+    const parsedEvents = parseGameRecordsPayload(payload);
+    if (!parsedEvents) {
+        alert(`시트를 불러오지 못했습니다. ${payload?.message || '기존 기록은 유지됩니다.'}`);
+        return false;
+    }
     return applyIncomingSheetRecords(parsedEvents, '구글 시트');
 };
 
@@ -407,9 +447,10 @@ function fetchAllYearTabsForInitialSync(webAppUrl) {
         };
         window[callbackName] = payload => {
             try {
-                const applied = window.handleGameRecordsResponse(payload);
+                const records = parseGameRecordsPayload(payload);
                 cleanup();
-                resolve(applied);
+                if (!records) throw new Error(payload?.message || '시트 기록을 읽지 못했습니다.');
+                resolve(records);
             } catch (error) {
                 cleanup();
                 reject(error);

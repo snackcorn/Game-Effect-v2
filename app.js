@@ -515,26 +515,28 @@ function handleGameSubmit(event) {
 
 function createGameObj(name, start, end, platform, time, endingStatus, memo, review, isCheckEnding = false, steamAppId = '', steamTotal = null) {
     let uniqueId = 'evt_' + Math.random().toString(36).substr(2, 9);
-    // 시트에 종료일이 없으면 시작일 하루짜리 기록으로 처리합니다.
-    let normalizedEnd = end || start;
-    let displayEnd = normalizedEnd === start ? '' : normalizedEnd; 
+    // 가져온 기록은 시작일을 기준으로 표시합니다. 시작일이 비어 있을 때만 종료일을
+    // 시작일로 사용하며, 종료일이 비어 있으면 시작일 하루짜리 기록으로 처리합니다.
+    let normalizedStart = start || end;
+    let normalizedEnd = end || normalizedStart;
+    let displayEnd = normalizedEnd === normalizedStart ? '' : normalizedEnd; 
     
     let gameObj = {
-        id: uniqueId, title: name, startDate: start, endDate: displayEnd, rawEndDate: normalizedEnd,
+        id: uniqueId, title: name, startDate: normalizedStart, endDate: displayEnd, rawEndDate: normalizedEnd,
         platform: platform, time: parseFloat(time || 0), isEnding: endingStatus, memo: memo || '', review: review || '',
         steamAppId: String(steamAppId || (String(platform).toLocaleLowerCase() === 'steam' ? getSteamAppIdForTitle(name) : '')),
         steamTotal: steamTotal !== null && steamTotal !== '' && Number.isFinite(Number(steamTotal)) ? Number(steamTotal) : null
     };
 
-    let eventObj = { id: uniqueId, title: name, start: start, extendedProps: gameObj };
+    let eventObj = { id: uniqueId, title: name, start: normalizedStart, extendedProps: gameObj };
     eventObj.backgroundColor = determineEventColor(gameObj);
 
-    let calcEnd = new Date(end);
+    let calcEnd = new Date(normalizedEnd);
     if (!isNaN(calcEnd.getTime())) {
         calcEnd.setDate(calcEnd.getDate() + 1);
         eventObj.end = calcEnd.toISOString().split('T')[0];
     } else {
-        eventObj.end = start;
+        eventObj.end = normalizedStart;
     }
     return eventObj;
 }
