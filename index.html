@@ -76,7 +76,8 @@
 
             <details class="guide-code-details">
                 <summary>📄 구글 시트·Steam 연동 코드 보기</summary>
-                <pre class="guide-code"><code>const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간'];
+                <button type="button" id="copySpreadsheetGuideButton" class="copy-spreadsheet-code-button" onclick="copySpreadsheetGuideCode()">📋 전체 코드 복사</button>
+                <pre class="guide-code"><code id="spreadsheetAppsScriptCode">const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간'];
 
 function doPost(e) {
   try {
@@ -123,7 +124,8 @@ function replaceAllRecords(records) {
   const groups = {};
   records.forEach(record => {
     const year = getYear(record.startDate);
-    (groups[year] ||= []).push(record);
+    if (!groups[year]) groups[year] = [];
+    groups[year].push(record);
   });
   spreadsheet.getSheets().forEach(sheet => {
     if (/^\d{4}$/.test(sheet.getName())) {

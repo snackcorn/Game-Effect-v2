@@ -523,6 +523,8 @@ h1 {
 .close-btn { position: absolute; top: 15px; right: 20px; color: #aaaaaa; font-size: 28px; font-weight: bold; cursor: pointer; }
 .close-btn:hover { color: #ffffff; }
 .modal-title { font-size: 1.4em; font-weight: bold; color: #818cf8; margin-bottom: 20px; border-bottom: 2px solid #3f3f50; padding-bottom: 10px; }
+.copy-spreadsheet-code-button { margin: 12px 0 8px; padding: 8px 12px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; font-weight: bold; cursor: pointer; }
+.copy-spreadsheet-code-button:hover { background: #1d4ed8; }
 .steam-title-converter-content { max-width: 680px; }
 .steam-title-converter-description { margin: -7px 0 14px; color: #cbd5e1; font-size: .92em; line-height: 1.5; }
 .steam-title-converter-list { display: flex; flex-direction: column; gap: 8px; max-height: min(52vh, 450px); overflow-y: auto; padding-right: 3px; }

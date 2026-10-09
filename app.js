@@ -58,6 +58,34 @@ function syncAllRecordsSafely() {
     return syncAllRecordsToGoogleSheet();
 }
 
+async function copySpreadsheetGuideCode() {
+    const code = document.getElementById('spreadsheetAppsScriptCode')?.textContent?.trim();
+    const button = document.getElementById('copySpreadsheetGuideButton');
+    if (!code || !button) return;
+
+    try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
+        await navigator.clipboard.writeText(code);
+    } catch (_) {
+        const temporary = document.createElement('textarea');
+        temporary.value = code;
+        temporary.style.position = 'fixed';
+        temporary.style.opacity = '0';
+        document.body.appendChild(temporary);
+        temporary.select();
+        const copied = document.execCommand('copy');
+        temporary.remove();
+        if (!copied) {
+            alert('자동 복사에 실패했습니다. 코드를 직접 선택해 복사해 주세요.');
+            return;
+        }
+    }
+
+    const originalText = button.textContent;
+    button.textContent = '✅ 복사 완료';
+    setTimeout(() => { button.textContent = originalText; }, 1800);
+}
+
 function getSteamTitleLinks() {
     try { return JSON.parse(localStorage.getItem('steam_title_appid_links') || '{}'); }
     catch (error) { return {}; }

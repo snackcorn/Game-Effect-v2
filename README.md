@@ -99,7 +99,8 @@ function replaceAllRecords(records) {
   const groups = {};
   records.forEach(record => {
     const year = getYear(record.startDate);
-    (groups[year] ||= []).push(record);
+    if (!groups[year]) groups[year] = [];
+    groups[year].push(record);
   });
   spreadsheet.getSheets().forEach(sheet => {
     if (/^\d{4}$/.test(sheet.getName())) {
