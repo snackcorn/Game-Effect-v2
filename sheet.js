@@ -26,7 +26,7 @@ function toggleSpreadsheetGuide() {
 function getSavedWebAppUrl() {
     let targetUrl = localStorage.getItem('user_local_web_app_url');
     if (!targetUrl) {
-        alert("먼저 '기록 저장하기'에 구글 웹 앱 URL 주소를 저장해 주세요.");
+        alert("먼저 '구글 시트 저장 주소'에 Apps Script의 /exec 주소를 넣고 연결 정보를 저장해 주세요.");
         return '';
     }
     return targetUrl;
@@ -530,7 +530,7 @@ function syncAllRecordsToGoogleSheet() {
 async function manuallySyncAllRecordsToGoogleSheet() {
     const targetUrl = localStorage.getItem('user_local_web_app_url');
     if (!targetUrl) {
-        alert('먼저 “기록 저장하기”에 Apps Script의 /exec 주소를 입력하고 연결 정보를 저장해 주세요.');
+        alert('먼저 “구글 시트 저장 주소”에 Apps Script의 /exec 주소를 입력하고 연결 정보를 저장해 주세요.');
         return;
     }
 
