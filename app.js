@@ -1028,6 +1028,7 @@ function renderBetaSettings() {
     document.getElementById('platformSettingsList').querySelectorAll('[data-remove-platform]').forEach(button => button.addEventListener('click', () => {
         settings.platforms.splice(Number(button.dataset.removePlatform), 1); saveBetaSettings(settings); renderBetaSettings();
     }));
+    renderSteamLauncherSettings();
     const history = JSON.parse(localStorage.getItem('game_effect_edit_history') || '[]');
     document.getElementById('editHistoryList').innerHTML = history.length ? history.map((item, index) => {
         const details = (item.details || []).filter(detail => detail !== '변경한 내용 없음');
@@ -1035,6 +1036,112 @@ function renderBetaSettings() {
         return `<div class="edit-history-item"><span><strong>${item.at} · ${item.action}: ${item.title}</strong>${detailHtml}</span>${item.snapshot ? `<button type="button" data-undo-history="${index}">되돌리기</button>` : ''}</div>`;
     }).join('') : '아직 편집 기록이 없습니다.';
     document.getElementById('editHistoryList').querySelectorAll('[data-undo-history]').forEach(button => button.addEventListener('click', () => undoBetaHistory(Number(button.dataset.undoHistory))));
+}
+
+function renderSteamLauncherSettings() {
+    const container = document.getElementById('steamLauncherSettingsList');
+    if (!container || typeof getSteamLauncherRegistry !== 'function') return;
+    const registry = getSteamLauncherRegistry();
+    container.replaceChildren();
+
+    if (registry.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'recent-week-empty';
+        empty.textContent = '등록된 통합 런처가 없습니다.';
+        container.appendChild(empty);
+        return;
+    }
+
+    registry.forEach((launcher, launcherIndex) => {
+        const item = document.createElement('div');
+        item.className = 'steam-launcher-settings-item';
+        const head = document.createElement('div');
+        head.className = 'steam-launcher-settings-head';
+        const title = document.createElement('strong');
+        title.textContent = launcher.title;
+        const appId = document.createElement('small');
+        appId.textContent = `AppID: ${launcher.appId}`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = '런처 제거';
+        remove.addEventListener('click', () => {
+            if (!confirm(`'${launcher.title}' 통합 런처와 하위 게임 등록을 제거할까요? 기존 게임 기록은 삭제하지 않습니다.`)) return;
+            const updated = getSteamLauncherRegistry();
+            updated.splice(launcherIndex, 1);
+            saveSteamLauncherRegistry(updated);
+            renderBetaSettings();
+        });
+        head.append(title, appId, remove);
+
+        const childList = document.createElement('div');
+        childList.className = 'steam-launcher-child-list';
+        if (launcher.children.length === 0) {
+            const empty = document.createElement('small');
+            empty.textContent = '하위 게임을 하나 이상 등록해야 동기화 때 선택할 수 있습니다.';
+            childList.appendChild(empty);
+        }
+        launcher.children.forEach((child, childIndex) => {
+            const row = document.createElement('div');
+            row.className = 'steam-launcher-child-row';
+            const name = document.createElement('span');
+            name.textContent = child.appId ? `${child.title} (상점 AppID: ${child.appId})` : child.title;
+            const removeChild = document.createElement('button');
+            removeChild.type = 'button';
+            removeChild.textContent = '제거';
+            removeChild.addEventListener('click', () => {
+                const updated = getSteamLauncherRegistry();
+                updated[launcherIndex].children.splice(childIndex, 1);
+                saveSteamLauncherRegistry(updated);
+                renderBetaSettings();
+            });
+            row.append(name, removeChild);
+            childList.appendChild(row);
+        });
+
+        const addRow = document.createElement('div');
+        addRow.className = 'steam-launcher-child-add';
+        const childTitle = document.createElement('input');
+        childTitle.type = 'text';
+        childTitle.placeholder = '하위 게임 이름';
+        const childAppId = document.createElement('input');
+        childAppId.type = 'text';
+        childAppId.inputMode = 'numeric';
+        childAppId.placeholder = '상점 AppID (선택)';
+        const addChild = document.createElement('button');
+        addChild.type = 'button';
+        addChild.textContent = '하위 게임 추가';
+        addChild.addEventListener('click', () => {
+            const name = childTitle.value.trim();
+            const storeAppId = childAppId.value.trim();
+            if (!name) return alert('하위 게임 이름을 입력해 주세요.');
+            if (storeAppId && !/^\d+$/.test(storeAppId)) return alert('상점 AppID는 숫자만 입력해 주세요.');
+            const updated = getSteamLauncherRegistry();
+            if (updated[launcherIndex].children.some(child => child.title.toLocaleLowerCase() === name.toLocaleLowerCase())) return alert('같은 하위 게임이 이미 등록되어 있습니다.');
+            updated[launcherIndex].children.push({ title: name, appId: storeAppId });
+            saveSteamLauncherRegistry(updated);
+            renderBetaSettings();
+        });
+        addRow.append(childTitle, childAppId, addChild);
+        item.append(head, childList, addRow);
+        container.appendChild(item);
+    });
+}
+
+function addSteamLauncherFromSettings() {
+    if (typeof getSteamLauncherRegistry !== 'function') return;
+    const titleInput = document.getElementById('newSteamLauncherTitle');
+    const appIdInput = document.getElementById('newSteamLauncherAppId');
+    const title = titleInput.value.trim();
+    const appId = appIdInput.value.trim();
+    if (!title || !appId) return alert('런처 이름과 Steam AppID를 모두 입력해 주세요.');
+    if (!/^\d+$/.test(appId)) return alert('Steam AppID는 숫자만 입력해 주세요.');
+    const registry = getSteamLauncherRegistry();
+    if (registry.some(launcher => launcher.appId === appId)) return alert('같은 Steam AppID의 런처가 이미 등록되어 있습니다.');
+    registry.push({ title, appId, children: [] });
+    saveSteamLauncherRegistry(registry);
+    titleInput.value = '';
+    appIdInput.value = '';
+    renderBetaSettings();
 }
 
 function undoBetaHistory(index) {
@@ -1094,6 +1201,9 @@ function resetAllGameData() {
     localStorage.removeItem('cached_game_events');
     localStorage.removeItem('game_effect_edit_history');
     localStorage.removeItem('steam_title_appid_links');
+    localStorage.removeItem('steam_launcher_registry');
+    localStorage.removeItem('steam_launcher_title_mappings');
+    localStorage.removeItem('steam_launcher_sync_totals');
     document.getElementById('gameForm').reset();
     renderPlatformOptions('gamePlatform');
     refreshUI();
@@ -1177,6 +1287,7 @@ document.addEventListener('DOMContentLoaded', function() {
         settings.platforms.push({ name, color: document.getElementById('newPlatformColor').value }); saveBetaSettings(settings); document.getElementById('newPlatformName').value = ''; renderBetaSettings();
     });
     document.getElementById('resetPlatformColorsButton').addEventListener('click', resetPlatformColorsToDefaults);
+    document.getElementById('addSteamLauncherButton').addEventListener('click', addSteamLauncherFromSettings);
     document.getElementById('resetAllGameDataButton').addEventListener('click', resetAllGameData);
 
     window.addEventListener('click', (e) => { 

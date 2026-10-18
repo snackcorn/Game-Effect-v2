@@ -704,6 +704,18 @@ h1 {
 .edit-history-item span { min-width: 0; display: flex; flex-direction: column; }
 .edit-history-item small { color: #94a3b8; line-height: 1.45; }
 .edit-history-item button { flex: 0 0 auto; border: 0; border-radius: 5px; padding: 4px 7px; background: #f59e0b; color: #1f2937; font-weight: bold; cursor: pointer; }
+.steam-launcher-settings-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.steam-launcher-settings-item { padding: 11px; border: 1px solid #475569; border-radius: 7px; background: #1e293b; }
+.steam-launcher-settings-head { display: flex; align-items: center; gap: 8px; }
+.steam-launcher-settings-head strong { flex: 1; min-width: 0; color: #e0e7ff; overflow-wrap: anywhere; }
+.steam-launcher-settings-head small { color: #94a3b8; }
+.steam-launcher-settings-head button, .steam-launcher-child-add button, .steam-launcher-child-row button, .steam-launcher-add-row button { border: 0; border-radius: 5px; padding: 7px 10px; background: #475569; color: white; cursor: pointer; }
+.steam-launcher-child-list { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
+.steam-launcher-child-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 5px; background: #111827; color: #cbd5e1; font-size: .88em; }
+.steam-launcher-child-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.steam-launcher-child-add, .steam-launcher-add-row { display: flex; gap: 8px; margin-top: 8px; }
+.steam-launcher-child-add input, .steam-launcher-add-row input { min-width: 0; flex: 1; background: #1e1e24; color: white; border: 1px solid #4b5563; border-radius: 5px; padding: 7px; }
+.steam-launcher-child-add input:last-of-type { flex: .55; }
 body.light-theme { background: #f4f7fb; color: #1f2937; }
 body.light-theme h1, body.light-theme .modal-title { color: #4338ca; }
 body.light-theme .form-container, body.light-theme .calculator-container, body.light-theme .integration-panel-content, body.light-theme .top-action-bar, body.light-theme .modal-content, body.light-theme .recent-week-sidebar, body.light-theme .settings-section, body.light-theme .connection-input-section, body.light-theme .connection-action-section { background: #fff; color: #1f2937; }
@@ -800,6 +812,8 @@ body.light-theme .record-tools-help dd { color: #475569; }
     .game-bar { font-size: .72em; }
     .recent-steam-choice-item { grid-template-columns: 1fr; }
     .recent-steam-choice-select { width: 100%; }
+    .steam-launcher-add-row, .steam-launcher-child-add { flex-wrap: wrap; }
+    .steam-launcher-add-row input, .steam-launcher-child-add input { flex: 1 1 130px; }
     .sheet-header-example div { justify-content: space-between; }
     .floating-menu-button { left: 14px; bottom: 14px; width: 70px; height: 70px; }
 }

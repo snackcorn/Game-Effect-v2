@@ -4,8 +4,9 @@
 
 const MIN_STEAM_SYNC_PLAYTIME_MINUTES = 18;
 const STEAM_STORE_LOOKUP_CONCURRENCY = 5;
-const STEAM_LAUNCHER_APP_IDS = new Set(['1938090']); // Call of Duty® HQ
+const STEAM_LAUNCHER_REGISTRY_STORAGE_KEY = 'steam_launcher_registry';
 const STEAM_LAUNCHER_TITLE_MAP_STORAGE_KEY = 'steam_launcher_title_mappings';
+const DEFAULT_STEAM_LAUNCHER_REGISTRY = [{ title: 'Call of Duty®', appId: '1938090', children: [] }];
 let pendingSteamTitleChanges = [];
 const steamStoreTitleCache = new Map();
 const steamStoreSearchCache = new Map();
@@ -781,10 +782,35 @@ function calculateTimeDifference() {
 let recentSteamRecordChoiceResolver = null;
 let steamLauncherAllocationResolver = null;
 
-function isSteamLauncherGame(game) {
+function normalizeSteamLauncherRegistry(registry) {
+    return (Array.isArray(registry) ? registry : []).map(launcher => ({
+        title: String(launcher?.title || '').trim(),
+        appId: String(launcher?.appId || '').trim(),
+        children: (Array.isArray(launcher?.children) ? launcher.children : []).map(child => ({
+            title: String(child?.title || '').trim(),
+            appId: String(child?.appId || '').trim()
+        })).filter(child => child.title)
+    })).filter(launcher => launcher.title && /^\d+$/.test(launcher.appId));
+}
+
+function getSteamLauncherRegistry() {
+    try {
+        const stored = localStorage.getItem(STEAM_LAUNCHER_REGISTRY_STORAGE_KEY);
+        if (stored) return normalizeSteamLauncherRegistry(JSON.parse(stored));
+    } catch (_) {}
+    const defaults = normalizeSteamLauncherRegistry(DEFAULT_STEAM_LAUNCHER_REGISTRY);
+    const legacyTitle = String(getSteamLauncherTitleMappings()['1938090'] || '').trim();
+    if (legacyTitle) defaults[0].children.push({ title: legacyTitle, appId: '' });
+    return defaults;
+}
+
+function saveSteamLauncherRegistry(registry) {
+    localStorage.setItem(STEAM_LAUNCHER_REGISTRY_STORAGE_KEY, JSON.stringify(normalizeSteamLauncherRegistry(registry)));
+}
+
+function getSteamLauncherForGame(game) {
     const appId = String(game?.appid || '');
-    const title = normalizeSteamTitle(game?.name || '');
-    return STEAM_LAUNCHER_APP_IDS.has(appId) || title === 'call of duty';
+    return getSteamLauncherRegistry().find(launcher => launcher.appId === appId) || null;
 }
 
 function getSteamLauncherTitleMappings() {
@@ -811,14 +837,15 @@ function getSteamRecordedTotal(existingRecords) {
 
 function getSteamLauncherAllocationCandidates(games) {
     return games.flatMap(game => {
-        if (!shouldSyncSteamGame(game) || !isSteamLauncherGame(game)) return [];
+        const launcher = getSteamLauncherForGame(game);
+        if (!shouldSyncSteamGame(game) || !launcher) return [];
         const steamAppId = String(game.appid || '');
         const existingRecords = localEvents.filter(record => String(record.extendedProps.steamAppId || '') === steamAppId);
         const currentTotal = parseFloat((Number(game.playtime_forever || 0) / 60).toFixed(1));
         const diffHours = parseFloat((currentTotal - getSteamRecordedTotal(existingRecords)).toFixed(1));
         const hasUsableFirstSyncDate = Boolean(getSteamLastPlayedDateOrEmpty(game.rtime_last_played));
         return diffHours > 0 && (existingRecords.length > 0 || hasUsableFirstSyncDate)
-            ? [{ steamAppId, launcherTitle: String(game.name || 'Call of Duty®') }]
+            ? [{ steamAppId, launcherTitle: launcher.title, children: launcher.children }]
             : [];
     });
 }
@@ -829,11 +856,11 @@ function requestSteamLauncherAllocation(candidates) {
     const modal = document.getElementById('steamLauncherAllocationModal');
     const list = document.getElementById('steamLauncherAllocationList');
     const mappings = getSteamLauncherTitleMappings();
-    const knownTitles = [...new Set(localEvents
-        .filter(record => String(record.extendedProps.platform || '').toLocaleLowerCase() === 'steam')
-        .map(record => String(record.title || '').trim())
-        .filter(title => title && normalizeSteamTitle(title) !== 'call of duty'))]
-        .sort((first, second) => first.localeCompare(second, 'ko'));
+    const missingChildren = candidates.filter(candidate => candidate.children.length === 0);
+    if (missingChildren.length > 0) {
+        alert(`${missingChildren.map(candidate => candidate.launcherTitle).join(', ')} 통합 런처에 하위 게임이 등록되지 않았습니다.\n\n설정 → Steam 통합 런처 관리에서 하위 게임을 먼저 추가해 주세요.`);
+        return Promise.resolve(null);
+    }
     list.innerHTML = '';
 
     candidates.forEach(candidate => {
@@ -841,29 +868,15 @@ function requestSteamLauncherAllocation(candidates) {
         item.className = 'steam-launcher-allocation-item';
         const name = document.createElement('label');
         name.className = 'steam-launcher-allocation-name';
-        name.textContent = `${candidate.launcherTitle} 증가 시간을 기록할 게임`;
+        name.textContent = `${candidate.launcherTitle} 증가 시간을 기록할 하위 게임`;
 
         const select = document.createElement('select');
         select.className = 'steam-launcher-allocation-select';
         select.dataset.steamAppId = candidate.steamAppId;
         const savedTitle = String(mappings[candidate.steamAppId] || '').trim();
-        select.add(new Option('직접 게임 이름 입력', '__manual__'));
-        knownTitles.forEach(title => select.add(new Option(title, title)));
-        if (savedTitle && knownTitles.includes(savedTitle)) select.value = savedTitle;
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'steam-launcher-allocation-input';
-        input.placeholder = '예: 콜 오브 듀티: 모던 워페어 4';
-        input.value = savedTitle && !knownTitles.includes(savedTitle) ? savedTitle : '';
-        input.dataset.steamAppId = candidate.steamAppId;
-        input.disabled = select.value !== '__manual__';
-        select.addEventListener('change', () => {
-            input.disabled = select.value !== '__manual__';
-            if (!input.disabled) input.focus();
-        });
-
-        item.append(name, select, input);
+        candidate.children.forEach(child => select.add(new Option(child.title, child.title)));
+        if (savedTitle && candidate.children.some(child => child.title === savedTitle)) select.value = savedTitle;
+        item.append(name, select);
         list.appendChild(item);
     });
 
@@ -889,11 +902,9 @@ function confirmSteamLauncherAllocation() {
     const selects = document.querySelectorAll('#steamLauncherAllocationList select');
     for (const select of selects) {
         const appId = select.dataset.steamAppId;
-        const input = document.querySelector(`#steamLauncherAllocationList input[data-steam-app-id="${appId}"]`);
-        const title = (select.value === '__manual__' ? input?.value : select.value || '').trim();
+        const title = String(select.value || '').trim();
         if (!title) {
-            alert('기록할 게임 이름을 선택하거나 직접 입력해 주세요.');
-            input?.focus();
+            alert('기록할 하위 게임을 선택해 주세요.');
             return;
         }
         allocations.set(appId, title);
