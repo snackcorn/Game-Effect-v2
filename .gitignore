@@ -1,0 +1,6 @@
+.vercel/
+Game-Effect-v2/
+.local-only/
+.env
+.env.*
+!.env.example
