@@ -9,6 +9,9 @@ let isAllRecordsDetailMode = false;
 let calendar = null;
 let shortPlaytimeCollapseScheduled = false;
 let calendarHoverCard = null;
+let steamSearchResultAppIds = new Set();
+let activeSteamTitleSearchToken = 0;
+let activeSteamTitleSearchKeyword = '';
 const steamAchievementCache = new Map();
 const DEFAULT_PLATFORM_SETTINGS = [
     ['steam', '#1044a0'], ['xbox gamepass', '#107c10'], ['Switch', '#ffb0b0'], ['Switch2', '#e60012'], ['ps4', '#b0b0ff'], ['ps5', '#4a148c'], ['stove', '#ffa259'], ['epic', '#00a3ff'], ['mobile', '#2d2d2d'], ['DLC', '#888888'], ['기타', '#b0bec5']
@@ -434,6 +437,51 @@ function executeLiveGameSearch() {
     }
 
     buildAggregatedCards('list-container', null, titleKeyword, dateKeyword, steamAppIdKeyword);
+    updateSteamTitleSearchMatches(titleKeyword);
+}
+
+function normalizeSearchText(value) {
+    return String(value || '')
+        .toLocaleLowerCase()
+        .normalize('NFKD')
+        .replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function getGameSearchAliases(game) {
+    const aliases = [game.title || ''];
+    const steamAppId = String(game.steamAppId || '');
+    if (steamAppId && typeof getSteamLauncherRegistry === 'function') {
+        const launcher = getSteamLauncherRegistry().find(item => item.appId === steamAppId);
+        if (launcher) aliases.push(launcher.title, ...launcher.children.map(child => child.title));
+    }
+    return aliases;
+}
+
+function isGameTitleSearchMatch(game, keyword) {
+    const normalizedKeyword = normalizeSearchText(keyword);
+    if (!normalizedKeyword) return true;
+    const steamAppId = String(game.steamAppId || '');
+    return getGameSearchAliases(game).some(alias => normalizeSearchText(alias).includes(normalizedKeyword))
+        || (steamAppId && steamSearchResultAppIds.has(steamAppId));
+}
+
+function updateSteamTitleSearchMatches(keyword) {
+    const normalizedKeyword = normalizeSearchText(keyword);
+    const token = ++activeSteamTitleSearchToken;
+    activeSteamTitleSearchKeyword = normalizedKeyword;
+    if (normalizedKeyword.length < 2 || typeof searchSteamStoreKoreanTitles !== 'function') {
+        steamSearchResultAppIds = new Set();
+        return;
+    }
+
+    searchSteamStoreKoreanTitles(keyword).then(items => {
+        if (token !== activeSteamTitleSearchToken || activeSteamTitleSearchKeyword !== normalizedKeyword) return;
+        steamSearchResultAppIds = new Set((items || []).map(item => String(item.appid || '')).filter(Boolean));
+        const titleKeyword = document.getElementById('searchTitleInput')?.value.trim().toLowerCase() || '';
+        const dateKeyword = document.getElementById('searchDateInput')?.value.trim() || '';
+        const steamAppIdKeyword = document.getElementById('searchSteamAppIdInput')?.value.trim() || '';
+        buildAggregatedCards('list-container', null, titleKeyword, dateKeyword, steamAppIdKeyword);
+    }).catch(() => {});
 }
 
 function isGameInSearchDate(gStart, gEnd, query) {
@@ -463,6 +511,9 @@ function clearSearchFilters() {
     document.getElementById('searchTitleInput').value = '';
     document.getElementById('searchSteamAppIdInput').value = '';
     document.getElementById('searchDateInput').value = '';
+    activeSteamTitleSearchToken++;
+    activeSteamTitleSearchKeyword = '';
+    steamSearchResultAppIds = new Set();
     refreshUI();
 }
 
@@ -568,7 +619,7 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
     if (titleFilter || dateFilter || steamAppIdFilter) {
         sourceList = sourceList.filter(evt => {
             let game = evt.extendedProps;
-            let matchTitle = titleFilter ? game.title.toLowerCase().includes(titleFilter) : true;
+            let matchTitle = titleFilter ? isGameTitleSearchMatch(game, titleFilter) : true;
             let matchDate = dateFilter ? isGameInSearchDate(game.startDate, game.rawEndDate || game.startDate, dateFilter) : true;
             let matchSteamAppId = steamAppIdFilter ? String(game.steamAppId || '').includes(steamAppIdFilter) : true;
             return matchTitle && matchDate && matchSteamAppId;

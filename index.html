@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.23 준비 중</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.26</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -250,7 +250,7 @@ function output(data) {
 
     <div class="top-action-bar" style="background-color: #23232f; border-color: #818cf8; margin-bottom: 25px;">
         <span class="url-input-label" style="color: #818cf8;">🔍 기록 찾기:</span>
-        <input type="text" id="searchTitleInput" class="url-input-field" placeholder="게임 제목으로 필터링...">
+        <input type="text" id="searchTitleInput" class="url-input-field" placeholder="한글·영문 게임 제목으로 검색...">
         <input type="text" id="searchSteamAppIdInput" class="url-input-field" placeholder="Steam AppID로 찾기">
         <input type="text" id="searchDateInput" class="url-input-field" placeholder="예: 2026-07 또는 2026-07-01 ~ 2026-07-05">
         <button type="button" class="sync-trigger-btn" style="background-color: #f59e0b;" onclick="clearSearchFilters()">🔄 검색 초기화</button>
@@ -448,7 +448,9 @@ function output(data) {
                 <h2>1. 기본 사용법</h2>
                 <ul>
                     <li><strong>게임 기록하기:</strong> 게임 이름, 플레이 시간, 날짜 등을 입력하고 기록합니다.</li>
+                    <li><strong>기록 찾기:</strong> 제목은 공백·기호를 무시해 찾습니다. Steam 상점 검색 결과와 통합 런처에 등록한 하위 게임 이름도 함께 비교하므로, 가능한 경우 한글 또는 영문 제목으로 같은 기록을 찾을 수 있습니다.</li>
                     <li><strong>최근 플레이 동기화:</strong> SteamID64를 저장한 뒤 누르면 AppID별로 누적 시간을 비교해 늘어난 시간만 추가합니다. 최근 7일 안에 같은 Steam 게임 기록이 있으면, 해당 기록에 이어 붙일지 별도 기록으로 남길지 게임별로 선택합니다. 통합 최초 불러오기에서는 Steam 마지막 실행일이 시트의 가장 최신 기록일보다 뒤인 경우에만, 시트 시간을 먼저 유지하고 남은 시간만 그 날짜에 기록합니다. 기존 시트 기록의 종료일은 바꾸지 않습니다.</li>
+                    <li><strong>통합 런처:</strong> 설정의 <strong>Steam 통합 런처 관리</strong>에서 런처 AppID와 하위 게임을 등록합니다. 런처 플레이시간이 늘면 어느 하위 게임으로 기록할지 선택하며, 원본 런처 AppID는 유지됩니다.</li>
                     <li><strong>달력 정보:</strong> Steam AppID가 연결된 게임에 마우스를 올리면 가능한 경우 썸네일·누적 플레이시간·업적 진행도를 봅니다. 정보를 가져올 수 없으면 해당 항목은 표시하지 않습니다.</li>
                     <li><strong>한줄평:</strong> 게임 전체에 대한 짧은 감상입니다.</li>
                     <li><strong>메모:</strong> 플레이한 날에 남기는 간단한 기록입니다.</li>
