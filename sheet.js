@@ -2,15 +2,22 @@
 // 📊 SHEET MODULE: 스프레드시트 수신 및 전송
 // ==========================================
 
-const SPREADSHEET_HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간'];
+// 기존 10개 열을 유지하고, v2.29의 식별·정확도 열은 뒤에만 추가합니다.
+const SPREADSHEET_HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일'];
 
 function saveWebAppUrlFromInput() {
     let urlVal = document.getElementById('webAppUrlInput').value.trim();
-    if (!urlVal) {
-        alert("연동할 구글 웹 앱 URL 주소를 올바르게 입력해 주세요!");
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(urlVal)) {
+        alert("구글 시트 저장 주소는 Apps Script의 https://script.google.com/macros/s/.../exec 주소만 사용할 수 있습니다.");
+        return;
+    }
+    const token = document.getElementById('sheetSyncTokenInput')?.value.trim() || localStorage.getItem('user_local_sheet_sync_token') || '';
+    if (token.length < 12) {
+        alert('시트 동기화 키를 12자 이상 입력하고 연결 정보를 저장해 주세요.');
         return;
     }
     localStorage.setItem('user_local_web_app_url', urlVal);
+    localStorage.setItem('user_local_sheet_sync_token', token);
     alert("구글 시트 저장 주소가 이 브라우저에 저장되었습니다. 🔒");
     document.getElementById('webAppUrlInput').value = urlVal;
 }
@@ -25,18 +32,44 @@ function toggleSpreadsheetGuide() {
 
 function getSavedWebAppUrl() {
     let targetUrl = localStorage.getItem('user_local_web_app_url');
-    if (!targetUrl) {
-        alert("먼저 '구글 시트 저장 주소'에 Apps Script의 /exec 주소를 넣고 연결 정보를 저장해 주세요.");
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(targetUrl || '')) {
+        alert("구글 시트 저장 주소는 Apps Script의 https://script.google.com/macros/s/.../exec 주소만 사용할 수 있습니다.");
         return '';
     }
     return targetUrl;
 }
 
+function getSheetSyncToken() {
+    const token = localStorage.getItem('user_local_sheet_sync_token') || '';
+    if (token.length < 12) {
+        alert('먼저 연결 정보의 시트 동기화 키를 12자 이상 입력하고 저장해 주세요.');
+        return '';
+    }
+    return token;
+}
+
+function buildAuthorizedWebAppUrl(targetUrl, params = {}) {
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(targetUrl || '')) {
+        alert('허용되지 않은 시트 저장 주소입니다. Apps Script의 /exec 주소를 다시 저장해 주세요.');
+        return '';
+    }
+    const token = getSheetSyncToken();
+    if (!token) return '';
+    const url = new URL(targetUrl);
+    Object.entries({ ...params, token }).forEach(([key, value]) => url.searchParams.set(key, value));
+    return url.toString();
+}
+
 function postWebAppData(targetUrl, payload) {
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(targetUrl || '')) {
+        return Promise.reject(new Error('허용되지 않은 시트 저장 주소입니다.'));
+    }
+    const token = getSheetSyncToken();
+    if (!token) return Promise.reject(new Error('시트 동기화 키가 없습니다.'));
     return fetch(targetUrl, {
         method: "POST",
         headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ ...payload, token })
     }).then(response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
@@ -67,7 +100,12 @@ function recordToSpreadsheetRow(game) {
         game.memo || '',
         game.review || '',
         game.steamAppId || '',
-        game.steamTotal ?? ''
+        game.steamTotal ?? '',
+        game.recordId || game.id || createRecordId(),
+        getRecordMinutes(game),
+        game.parentAppId || '',
+        game.isLauncherAllocation ? 'Y' : '',
+        game.calendarLinkStart || ''
     ];
 }
 
@@ -120,8 +158,8 @@ function downloadRecordsAsXlsx() {
         let records = recordsByYear.get(year).sort((left, right) => String(left.startDate || '').localeCompare(String(right.startDate || '')));
         let worksheet = XLSX.utils.aoa_to_sheet([SPREADSHEET_HEADERS, ...records.map(recordToSpreadsheetRow)]);
         worksheet['!cols'] = [
-            { wch: 28 }, { wch: 13 }, { wch: 13 }, { wch: 16 }, { wch: 10 },
-            { wch: 12 }, { wch: 36 }, { wch: 30 }, { wch: 14 }, { wch: 16 }
+            { wch: 24 }, { wch: 28 }, { wch: 13 }, { wch: 13 }, { wch: 16 }, { wch: 10 },
+            { wch: 14 }, { wch: 12 }, { wch: 36 }, { wch: 30 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 14 }
         ];
         XLSX.utils.book_append_sheet(workbook, worksheet, year);
     });
@@ -167,7 +205,7 @@ function cleanLocalGameData() {
 
         seenRecords.add(key);
         let isEnding = endingStatus !== 'x';
-        cleanedEvents.push(createGameObj(title, startDate, endDate, platform, time, endingStatus, memo, review, isEnding, game.steamAppId, game.steamTotal));
+        cleanedEvents.push(createGameObj(title, startDate, endDate, platform, time, endingStatus, memo, review, isEnding, game.steamAppId, game.steamTotal, game));
     });
 
     cleanedEvents.sort((a, b) => {
@@ -313,6 +351,7 @@ function parseAndRenderCSV(csvText) {
     let parsedEvents = [];
 
     let cols = allRows[0].map(c => c.trim().replace(/^"|"$/g, ''));
+    let recordIdIdx = cols.indexOf('기록 ID');
     let nameIdx = cols.indexOf('이름');
     let startIdx = cols.indexOf('시작일');
     let endIdx = cols.indexOf('종료일');
@@ -323,6 +362,10 @@ function parseAndRenderCSV(csvText) {
     let reviewIdx = cols.indexOf('한줄평');
     let steamAppIdIdx = cols.indexOf('Steam AppID');
     let steamTotalIdx = cols.indexOf('Steam 누적시간');
+    let minutesIdx = cols.indexOf('플레이시간(분)');
+    let parentAppIdIdx = cols.indexOf('런처 부모 AppID');
+    let launcherAllocationIdx = cols.indexOf('런처 배분 기록');
+    let calendarLinkStartIdx = cols.indexOf('달력 연결 시작일');
 
     if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) return;
 
@@ -341,12 +384,17 @@ function parseAndRenderCSV(csvText) {
         let steamAppId = steamAppIdIdx !== -1 ? (row[steamAppIdIdx] || '') : '';
         let steamTotalText = steamTotalIdx !== -1 ? String(row[steamTotalIdx] || '').trim() : '';
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
+        let recordId = recordIdIdx !== -1 ? String(row[recordIdIdx] || '').trim() : '';
+        let minutes = minutesIdx !== -1 ? Number(row[minutesIdx]) : null;
+        let parentAppId = parentAppIdIdx !== -1 ? String(row[parentAppIdIdx] || '').trim() : '';
+        let isLauncherAllocation = launcherAllocationIdx !== -1 && String(row[launcherAllocationIdx] || '').trim().toUpperCase() === 'Y';
+        let calendarLinkStart = calendarLinkStartIdx !== -1 ? String(row[calendarLinkStartIdx] || '').trim() : '';
 
         if (!name || (!startDate && !endDate)) continue;
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%'));
-        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal));
+        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal, { recordId, playtimeMinutes: minutes, parentAppId, isLauncherAllocation, calendarLinkStart }));
     }
     applyIncomingSheetRecords(parsedEvents, 'CSV');
 }
@@ -370,6 +418,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
     }
 
     let nameIdx = cols.indexOf('이름');
+    let recordIdIdx = cols.indexOf('기록 ID');
     let startIdx = cols.indexOf('시작일');
     let endIdx = cols.indexOf('종료일');
     let platformIdx = cols.indexOf('플랫폼');
@@ -379,6 +428,10 @@ window.handleGoogleSheetResponse = function(rawJson) {
     let reviewIdx = cols.indexOf('한줄평');
     let steamAppIdIdx = cols.indexOf('Steam AppID');
     let steamTotalIdx = cols.indexOf('Steam 누적시간');
+    let minutesIdx = cols.indexOf('플레이시간(분)');
+    let parentAppIdIdx = cols.indexOf('런처 부모 AppID');
+    let launcherAllocationIdx = cols.indexOf('런처 배분 기록');
+    let calendarLinkStartIdx = cols.indexOf('달력 연결 시작일');
 
     if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) return;
 
@@ -399,12 +452,17 @@ window.handleGoogleSheetResponse = function(rawJson) {
         let steamAppId = steamAppIdIdx !== -1 && row[steamAppIdIdx]?.v ? row[steamAppIdIdx].v.toString().trim() : '';
         let steamTotalText = steamTotalIdx !== -1 && row[steamTotalIdx]?.v !== undefined ? String(row[steamTotalIdx].v).trim() : '';
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
+        let recordId = recordIdIdx !== -1 && row[recordIdIdx]?.v ? String(row[recordIdIdx].v).trim() : '';
+        let minutes = minutesIdx !== -1 && row[minutesIdx]?.v !== undefined ? Number(row[minutesIdx].v) : null;
+        let parentAppId = parentAppIdIdx !== -1 && row[parentAppIdIdx]?.v ? String(row[parentAppIdIdx].v).trim() : '';
+        let isLauncherAllocation = launcherAllocationIdx !== -1 && String(row[launcherAllocationIdx]?.v || '').trim().toUpperCase() === 'Y';
+        let calendarLinkStart = calendarLinkStartIdx !== -1 && row[calendarLinkStartIdx]?.v ? String(row[calendarLinkStartIdx].v).trim() : '';
 
         if (!name || (!startDate && !endDate)) continue;
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.toString().includes('엔딩') || endingStatus.toString().includes('%'));
-        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal));
+        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal, { recordId, playtimeMinutes: minutes, parentAppId, isLauncherAllocation, calendarLinkStart }));
     }
 
     applyIncomingSheetRecords(parsedEvents, '구글 시트');
@@ -423,7 +481,7 @@ function parseGameRecordsPayload(payload) {
         let isEndMark = endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%');
         let steamTotalText = String(record.steamTotal ?? '').trim();
         let steamTotal = steamTotalText === '' ? null : Number(steamTotalText);
-        parsedEvents.push(createGameObj(name, startDate, endDate, record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal));
+        parsedEvents.push(createGameObj(name, startDate, endDate, record.platform || '-', Number(record.time || 0), endingStatus, memo, record.review || '', isEndMark, record.steamAppId || '', steamTotal, record));
     });
     return parsedEvents;
 }
@@ -458,7 +516,9 @@ function fetchAllYearTabsForInitialSync(webAppUrl) {
                 reject(error);
             }
         };
-        script.src = `${webAppUrl}?action=gameRecords&callback=${callbackName}`;
+        const authorizedUrl = buildAuthorizedWebAppUrl(webAppUrl, { action: 'gameRecords', callback: callbackName });
+        if (!authorizedUrl) { cleanup(); reject(new Error('시트 동기화 키를 먼저 저장해 주세요.')); return; }
+        script.src = authorizedUrl;
         script.onerror = () => {
             cleanup();
             reject(new Error('시트를 불러오지 못했습니다. Apps Script를 새 코드로 배포했는지 확인해 주세요.'));
@@ -472,7 +532,9 @@ function fetchAllYearTabs(webAppUrl) {
     if (oldScript) oldScript.remove();
     let script = document.createElement('script');
     script.id = 'game-records-jsonp-script';
-    script.src = `${webAppUrl}?action=gameRecords&callback=handleGameRecordsResponse`;
+    const authorizedUrl = buildAuthorizedWebAppUrl(webAppUrl, { action: 'gameRecords', callback: 'handleGameRecordsResponse' });
+    if (!authorizedUrl) return;
+    script.src = authorizedUrl;
     script.onerror = () => {
         script.remove();
         alert('시트를 불러오지 못했습니다. Apps Script 코드를 새 코드로 바꾼 뒤 새 배포했는지 확인해 주세요.');
@@ -515,16 +577,34 @@ function forceFetchSpreadsheetData() {
     }
 }
 
-function syncAllRecordsToGoogleSheet() {
+function confirmGoogleSheetWrite(actionLabel, recordCount) {
+    return confirm(
+        `⚠️ 구글 스프레드시트 변경 경고\n\n` +
+        `“${actionLabel}” 작업은 현재 로컬 기록 ${recordCount}개를 시트에 병합·수정합니다.\n` +
+        `동일한 기록 ID는 최신 내용으로 업데이트되며, 시트에만 있는 다른 기록은 삭제하지 않습니다.\n\n계속할까요?`
+    );
+}
+
+function syncAllRecordsToGoogleSheet(options = {}) {
     let targetUrl = localStorage.getItem('user_local_web_app_url');
     if (!targetUrl) return Promise.resolve();
 
     const records = localEvents.map(event => ({ ...event.extendedProps }));
-    return postWebAppData(targetUrl, { action: 'replaceAll', records })
+    if (records.length === 0) {
+        if (!options.silent) alert('로컬 기록이 없어 시트에 저장하지 않았습니다. 먼저 시트 기록을 불러오거나 게임 기록을 추가해 주세요.');
+        return Promise.resolve({ skipped: true });
+    }
+    if (!options.skipConfirm && !confirmGoogleSheetWrite(options.actionLabel || '사이트 기록 저장', records.length)) return Promise.resolve({ cancelled: true });
+    return postWebAppData(targetUrl, { action: 'upsertRecords', records })
         .then(result => {
-            if (result.result !== 'success') throw new Error(result.message || '전체 기록 동기화에 실패했습니다.');
+            if (result.result !== 'success') throw new Error(result.message || '시트 병합 저장에 실패했습니다. Apps Script 코드를 v2.30 코드로 교체하고 새 배포했는지 확인해 주세요.');
+            return result;
         })
-        .catch(error => console.error('구글 시트 동기화 오류:', error));
+        .catch(error => {
+            console.error('구글 시트 동기화 오류:', error);
+            if (!options.silent) alert(`시트에 저장하지 못했습니다. ${error.message}`);
+            return { error };
+        });
 }
 
 async function manuallySyncAllRecordsToGoogleSheet() {
@@ -534,16 +614,22 @@ async function manuallySyncAllRecordsToGoogleSheet() {
         return;
     }
 
+    const records = localEvents.map(event => ({ ...event.extendedProps }));
+    if (records.length === 0) {
+        const loadFirst = confirm('로컬 기록이 없습니다. 빈 기록으로 시트를 덮어쓰지 않습니다.\n\n확인: 시트 기록을 먼저 불러오기\n취소: 아무 작업도 하지 않기');
+        if (loadFirst) forceFetchSpreadsheetData();
+        return;
+    }
+    if (!confirmGoogleSheetWrite('수동 시트 동기화', records.length)) return;
     const button = document.getElementById('manualSheetSyncButton');
     if (button) {
         button.disabled = true;
         button.innerText = '⏳ 시트에 저장 중...';
     }
     try {
-        const records = localEvents.map(event => ({ ...event.extendedProps }));
-        const result = await postWebAppData(targetUrl, { action: 'replaceAll', records });
-        if (result.result !== 'success') throw new Error(result.message || '전체 기록 저장에 실패했습니다.');
-        alert(`시트 수동 동기화 완료\n\n현재 기록 ${records.length}개를 연도별 시트에 저장했습니다.`);
+        const result = await syncAllRecordsToGoogleSheet({ skipConfirm: true, actionLabel: '수동 시트 동기화' });
+        if (result?.error) throw result.error;
+        alert(`시트 수동 동기화 완료\n\n현재 기록 ${records.length}개를 연도별 시트에 병합 저장했습니다.`);
     } catch (error) {
         alert(`시트 수동 동기화 실패: ${error.message}`);
     } finally {

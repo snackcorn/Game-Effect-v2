@@ -1,10 +1,12 @@
 const STEAM_ID64_PATTERN = /^\d{17}$/;
+const { applyRateLimit } = require('./rate-limit');
 
 module.exports = async function handler(req, res) {
     if (req.method !== 'GET') {
         res.setHeader('Allow', 'GET');
         return res.status(405).json({ error: 'GET 요청만 사용할 수 있습니다.' });
     }
+    if (applyRateLimit(req, res, { key: 'owned-games', limit: 30 })) return;
 
     const steamId = String(req.query.steamid || '').trim();
     if (!STEAM_ID64_PATTERN.test(steamId)) {

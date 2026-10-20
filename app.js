@@ -59,6 +59,81 @@ function saveToLocalStorage() {
     localStorage.setItem('cached_game_events', JSON.stringify(localEvents));
 }
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    }[char]));
+}
+
+function createRecordId() {
+    return `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function toPlaytimeMinutes(value, fallbackMinutes = null) {
+    if (Number.isInteger(Number(fallbackMinutes)) && Number(fallbackMinutes) >= 0) return Number(fallbackMinutes);
+    const hours = Number(value);
+    return Number.isFinite(hours) && hours >= 0 ? Math.round(hours * 60) : 0;
+}
+
+function setRecordMinutes(record, minutes) {
+    const safeMinutes = Math.max(0, Math.round(Number(minutes) || 0));
+    record.playtimeMinutes = safeMinutes;
+    // 기존 시트·내보내기 호환용 표시값입니다. 계산은 playtimeMinutes만 사용합니다.
+    record.time = Number((safeMinutes / 60).toFixed(4));
+    return safeMinutes;
+}
+
+function getRecordMinutes(recordOrEvent) {
+    const record = recordOrEvent?.extendedProps || recordOrEvent || {};
+    return toPlaytimeMinutes(record.time, record.playtimeMinutes);
+}
+
+function formatPlaytime(minutes, mode = 'decimal') {
+    const safeMinutes = Math.max(0, Math.round(Number(minutes) || 0));
+    if (mode === 'hm') {
+        const hours = Math.floor(safeMinutes / 60);
+        const rest = safeMinutes % 60;
+        return hours > 0 ? `${hours}시간 ${rest}분` : `${rest}분`;
+    }
+    return `${(safeMinutes / 60).toFixed(1)}시간`;
+}
+
+function migrateRecordDataModel(events = localEvents) {
+    let changed = false;
+    events.forEach(event => {
+        const record = event.extendedProps || event;
+        if (!record.recordId) { record.recordId = event.id || createRecordId(); changed = true; }
+        const minutes = toPlaytimeMinutes(record.time, record.playtimeMinutes);
+        if (record.playtimeMinutes !== minutes || Number(record.time) !== Number((minutes / 60).toFixed(4))) {
+            setRecordMinutes(record, minutes);
+            changed = true;
+        }
+        if (record.isLauncherParent === undefined) record.isLauncherParent = false;
+        if (record.isAllocated === undefined) record.isAllocated = false;
+    });
+    return changed;
+}
+
+let bodyScrollLockDepth = 0;
+let bodyOverflowBeforeModal = '';
+function lockBodyScroll() {
+    if (bodyScrollLockDepth++ === 0) {
+        bodyOverflowBeforeModal = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+    }
+}
+function unlockBodyScroll() {
+    if (bodyScrollLockDepth > 0 && --bodyScrollLockDepth === 0) document.body.style.overflow = bodyOverflowBeforeModal;
+}
+function setModalVisibility(modal, visible) {
+    if (!modal) return;
+    const isOpen = modal.style.display === 'flex';
+    if (visible && !isOpen) lockBodyScroll();
+    if (!visible && isOpen) unlockBodyScroll();
+    modal.style.display = visible ? 'flex' : 'none';
+    modal.setAttribute('aria-hidden', String(!visible));
+}
+
 function syncAllRecordsSafely() {
     if (typeof syncAllRecordsToGoogleSheet !== 'function') {
         console.warn('최신 sheet.js가 아직 배포되지 않아 구글 시트 동기화를 건너뜁니다.');
@@ -70,6 +145,7 @@ function syncAllRecordsSafely() {
 function saveConnectionSettings() {
     const sheetUrl = document.getElementById('spreadsheetUrlInput')?.value.trim() || '';
     const webAppUrl = document.getElementById('webAppUrlInput')?.value.trim() || '';
+    const sheetSyncToken = document.getElementById('sheetSyncTokenInput')?.value.trim() || '';
     const steamId = document.getElementById('steamIdInput')?.value.trim() || '';
     const saved = [];
 
@@ -78,7 +154,16 @@ function saveConnectionSettings() {
         saved.push('스프레드시트 주소');
     }
     if (webAppUrl) {
+        if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(webAppUrl)) {
+            alert('시트 저장 주소는 https://script.google.com/macros/s/.../exec 형식만 사용할 수 있습니다.');
+            return;
+        }
+        if (sheetSyncToken.length < 12) {
+            alert('시트 동기화 키는 12자 이상으로 입력해 주세요.');
+            return;
+        }
         localStorage.setItem('user_local_web_app_url', webAppUrl);
+        localStorage.setItem('user_local_sheet_sync_token', sheetSyncToken);
         saved.push('시트 저장 주소');
     }
     if (steamId) {
@@ -144,7 +229,14 @@ function getGameIdentity(gameOrEvent) {
     const game = gameOrEvent?.extendedProps || gameOrEvent || {};
     const steamAppId = String(game.steamAppId || '').trim();
     if (steamAppId) return `steam:${steamAppId}`;
-    return `title:${String(game.title || '').trim().toLocaleLowerCase()}`;
+    // Steam 연결이 없는 기록은 제목뿐 아니라 플랫폼까지 같아야 같은 게임입니다.
+    const title = String(game.title || '').trim().toLocaleLowerCase();
+    const platform = String(game.platform || '').trim().toLocaleLowerCase();
+    return `manual:${title}\u001F${platform}`;
+}
+
+function isSummaryRecord(event) {
+    return !Boolean((event?.extendedProps || event || {}).isAllocated);
 }
 
 function getRecordStartYear(gameOrEvent) {
@@ -177,7 +269,15 @@ function determineEventColor(gameObj) {
 
 function renderPlatformOptions(selectId, selected = '') {
     const select = document.getElementById(selectId); if (!select) return;
-    select.innerHTML = getBetaSettings().platforms.map(item => `<option value="${item.name}" ${item.name === selected ? 'selected' : ''}>${item.name}</option>`).join('');
+    // 플랫폼 이름은 사용자가 설정에서 직접 추가할 수 있으므로 HTML 문자열로 넣지 않습니다.
+    select.replaceChildren();
+    getBetaSettings().platforms.forEach(item => {
+        const option = document.createElement('option');
+        option.value = String(item.name || '');
+        option.textContent = String(item.name || '');
+        option.selected = option.value === String(selected || '');
+        select.appendChild(option);
+    });
 }
 
 function addDays(dateStr, days) {
@@ -202,7 +302,7 @@ function getGameTotalPlayTime(games) {
         .filter(event => event.extendedProps.steamTotal !== null && event.extendedProps.steamTotal !== '' && Number.isFinite(Number(event.extendedProps.steamTotal)))
         .sort((left, right) => String(left.extendedProps.startDate || '').localeCompare(String(right.extendedProps.startDate || '')));
     if (steamTotals.length) return Number(steamTotals[steamTotals.length - 1].extendedProps.steamTotal);
-    return games.reduce((sum, event) => sum + Number(event.extendedProps.time || 0), 0);
+    return games.reduce((sum, event) => sum + getRecordMinutes(event) / 60, 0);
 }
 
 function buildDailyCalendarEvents() {
@@ -227,6 +327,17 @@ function buildDailyCalendarEvents() {
             const game = event.extendedProps;
             const dates = getDatesInRange(game.startDate, game.rawEndDate || game.endDate || game.startDate);
             if (dates.length === 0) return;
+            // 데이터는 하루 기록 그대로 두고, 사용자가 선택했을 때만 달력에서 이전 기록부터 바처럼 보입니다.
+            if (game.calendarLinkStart && game.calendarLinkStart < game.startDate) {
+                calendarEvents.push({
+                    ...event,
+                    id: `${event.id}_linked`,
+                    start: game.calendarLinkStart,
+                    end: addDays(game.rawEndDate || game.endDate || game.startDate, 1),
+                    extendedProps: { ...game, originalEventId: event.id, totalPlayTime, isCalendarLinkedDisplay: true }
+                });
+                return;
+            }
             const hasExactDailySteamTime = game.steamTotal !== null && game.steamTotal !== '' && Number.isFinite(Number(game.steamTotal)) && dates.length === 1;
             if (hasExactDailySteamTime) {
                 calendarEvents.push({
@@ -240,7 +351,7 @@ function buildDailyCalendarEvents() {
                         originalEventId: event.id,
                         totalPlayTime,
                         displayTotalTime: Number(game.steamTotal),
-                        dailyIncrease: Number(game.time || 0),
+                        dailyIncrease: getRecordMinutes(game) / 60,
                         hasExactDailySteamTime: true
                     }
                 });
@@ -580,8 +691,8 @@ function handleGameSubmit(event) {
     document.getElementById('autocompleteList').style.display = 'none';
 }
 
-function createGameObj(name, start, end, platform, time, endingStatus, memo, review, isCheckEnding = false, steamAppId = '', steamTotal = null) {
-    let uniqueId = 'evt_' + Math.random().toString(36).substr(2, 9);
+function createGameObj(name, start, end, platform, time, endingStatus, memo, review, isCheckEnding = false, steamAppId = '', steamTotal = null, metadata = {}) {
+    let uniqueId = metadata.recordId || 'evt_' + Math.random().toString(36).substr(2, 9);
     // 가져온 기록은 시작일을 기준으로 표시합니다. 시작일이 비어 있을 때만 종료일을
     // 시작일로 사용하며, 종료일이 비어 있으면 시작일 하루짜리 기록으로 처리합니다.
     let normalizedStart = start || end;
@@ -590,10 +701,16 @@ function createGameObj(name, start, end, platform, time, endingStatus, memo, rev
     
     let gameObj = {
         id: uniqueId, title: name, startDate: normalizedStart, endDate: displayEnd, rawEndDate: normalizedEnd,
-        platform: platform, time: parseFloat(time || 0), isEnding: endingStatus, memo: memo || '', review: review || '',
+        recordId: metadata.recordId || uniqueId,
+        platform: platform, time: 0, playtimeMinutes: 0, isEnding: endingStatus, memo: memo || '', review: review || '',
         steamAppId: String(steamAppId || (String(platform).toLocaleLowerCase() === 'steam' ? getSteamAppIdForTitle(name) : '')),
-        steamTotal: steamTotal !== null && steamTotal !== '' && Number.isFinite(Number(steamTotal)) ? Number(steamTotal) : null
+        steamTotal: steamTotal !== null && steamTotal !== '' && Number.isFinite(Number(steamTotal)) ? Number(steamTotal) : null,
+        isLauncherParent: Boolean(metadata.isLauncherParent),
+        parentAppId: String(metadata.parentAppId || ''),
+        isAllocated: Boolean(metadata.isAllocated),
+        calendarLinkStart: String(metadata.calendarLinkStart || '')
     };
+    setRecordMinutes(gameObj, toPlaytimeMinutes(time, metadata.playtimeMinutes));
 
     let eventObj = { id: uniqueId, title: name, start: normalizedStart, extendedProps: gameObj };
     eventObj.backgroundColor = determineEventColor(gameObj);
@@ -611,10 +728,10 @@ function createGameObj(name, start, end, platform, time, endingStatus, memo, rev
 function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter = "", dateFilter = "", steamAppIdFilter = "", sortMode = "playtime") {
     let container = document.getElementById(targetContainerId);
     container.innerHTML = '';
-    let sourceList = localEvents;
+    let sourceList = localEvents.filter(isSummaryRecord);
     
     // 연도별 요약과 시트 저장은 모두 기록의 시작일을 기준으로 합니다.
-    if (targetYear) { sourceList = localEvents.filter(evt => getRecordStartYear(evt) === targetYear); }
+    if (targetYear) { sourceList = sourceList.filter(evt => getRecordStartYear(evt) === targetYear); }
     
     if (titleFilter || dateFilter || steamAppIdFilter) {
         sourceList = sourceList.filter(evt => {
@@ -637,7 +754,7 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
             title: game.title, time: 0, platform: game.platform, hasEnded: false,
             eventId: evt.id, startDate: game.startDate || ''
         };
-        summary.time += Number(game.time) || 0;
+        summary.time += getRecordMinutes(game) / 60;
         if (isGameFinished(game.isEnding)) summary.hasEnded = true;
         if (game.startDate && (!summary.startDate || game.startDate < summary.startDate)) summary.startDate = game.startDate;
         gameSummaries.set(key, summary);
@@ -668,10 +785,10 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
         card.style.borderLeft = `6px solid ${cardColor}`;
         
         let badgeHTML = hasEnded ? '<div class="card-ending-badge">🏆 엔딩 완료</div>' : '';
-        let startInfoHTML = targetYear ? '<div class="card-info">📅 첫 시작일: ' + (summary.startDate || '-') + '</div>' : '';
+        let startInfoHTML = targetYear ? '<div class="card-info">📅 첫 시작일: ' + escapeHtml(summary.startDate || '-') + '</div>' : '';
         card.innerHTML = `
             ${badgeHTML}
-            <div class="card-title">${title}</div>
+            <div class="card-title">${escapeHtml(title)}</div>
             <div class="card-info" style="font-size: 1.1em; margin-top: 10px;">⏱ ${timeLabelText}: <span style="color:#818cf8; font-size:1.2em;">${aggregatedTime.toFixed(1)}</span> 시간</div>
             ${startInfoHTML}
         `;
@@ -681,7 +798,7 @@ function buildAggregatedCards(targetContainerId, targetYear = null, titleFilter 
 }
 
 function calculateYearlyReport(targetYear) {
-    let filteredEvents = localEvents.filter(evt => getRecordStartYear(evt) === targetYear);
+    let filteredEvents = localEvents.filter(evt => isSummaryRecord(evt) && getRecordStartYear(evt) === targetYear);
     if (filteredEvents.length === 0) {
         document.getElementById('statTotalTime').innerText = '0 시간';
         document.getElementById('statEndingCount').innerText = '0 개';
@@ -695,7 +812,7 @@ function calculateYearlyReport(targetYear) {
     let totalTime = 0; let gameTimeMap = new Map(); let uniqueEndedGamesInYear = new Set(); let latestReviewText = "-"; let maxStartDate = "";
 
     filteredEvents.forEach(evt => {
-        let game = evt.extendedProps; let t = Number(game.time) || 0; totalTime += t;
+        let game = evt.extendedProps; let t = getRecordMinutes(game) / 60; totalTime += t;
         let key = getGameIdentity(game);
         let summary = gameTimeMap.get(key) || { title: game.title, time: 0 };
         summary.time += t;
@@ -738,7 +855,7 @@ function renderTopGames() {
     let weekStartText = formatLocalDate(weekStart);
 
     let gamesByTitle = new Map();
-    localEvents.forEach(event => {
+    localEvents.filter(isSummaryRecord).forEach(event => {
         let game = event.extendedProps;
         let title = (game.title || event.title || '').trim();
         let startDate = game.startDate || '';
@@ -746,7 +863,7 @@ function renderTopGames() {
 
         let key = getGameIdentity(game);
         let current = gamesByTitle.get(key) || { title: title, time: 0, event: event };
-        current.time += Number(game.time) || 0;
+        current.time += getRecordMinutes(game) / 60;
         if ((game.rawEndDate || game.startDate || '') >= (current.event.extendedProps.rawEndDate || current.event.extendedProps.startDate || '')) {
             current.event = event;
         }
@@ -831,7 +948,7 @@ function openDetailModalById(id, options = {}) {
     }
     currentSelectedEventId = targetEvent.id;
     currentSelectedGameTitle = gameObj.title;
-    const totalAggTime = sameGames.reduce((acc, curr) => acc + (Number(curr.extendedProps.time) || 0), 0);
+    const totalAggTime = sameGames.reduce((acc, curr) => acc + getRecordMinutes(curr) / 60, 0);
     const firstStartDate = sameGames.reduce((first, event) => {
         const date = String(event.extendedProps.startDate || '');
         return !first || (date && date < first) ? date : first;
@@ -847,19 +964,20 @@ function openDetailModalById(id, options = {}) {
     const modeNotice = document.getElementById('modalDetailModeNotice');
     modeNotice.style.display = showAllRecords ? 'block' : 'none';
     if (showAllRecords) modeNotice.textContent = `모든 기록 ${sameGames.length}개를 합친 게임 전체 정보입니다.`;
-    document.getElementById('modalGameTitle').innerHTML = showAllRecords ? `${gameObj.title} <small>모든 기록</small>` : gameObj.title;
+    document.getElementById('modalGameTitle').innerHTML = showAllRecords ? `${escapeHtml(gameObj.title)} <small>모든 기록</small>` : escapeHtml(gameObj.title);
     document.getElementById('modalGameTimeLabel').textContent = showAllRecords ? '⏱️ 전체 누적 플레이타임' : '⏱️ 플레이타임';
     document.getElementById('modalGameStartLabel').textContent = showAllRecords ? '📅 처음 기록한 날' : '📅 시작한 날';
     document.getElementById('modalGameEndLabel').textContent = showAllRecords ? '📅 마지막 기록한 날' : '📅 끝낸 날';
     document.getElementById('modalGameTimeZone').innerHTML = showAllRecords
         ? `<span id="modalGameTime">${totalAggTime.toFixed(1)}</span> 시간`
         : `<span id="modalGameTime">${Number(gameObj.time || 0).toFixed(1)}</span> 시간 (전체 누적합: ${totalAggTime.toFixed(1)}h)`;
-    document.getElementById('modalGameStartZone').innerHTML = `<span id="modalGameStart">${showAllRecords ? firstStartDate : gameObj.startDate}</span>`;
-    document.getElementById('modalGameEndZone').innerHTML = `<span id="modalGameEnd">${showAllRecords ? lastRecordedDate : (gameObj.endDate || '진행 중')}</span>`;
+    document.getElementById('modalGameStartZone').innerHTML = `<span id="modalGameStart">${escapeHtml(showAllRecords ? firstStartDate : gameObj.startDate)}</span>`;
+    document.getElementById('modalGameEndZone').innerHTML = `<span id="modalGameEnd">${escapeHtml(showAllRecords ? lastRecordedDate : (gameObj.endDate || '진행 중'))}</span>`;
     document.getElementById('modalGameTrophyZone').innerHTML = `<span id="modalGameTrophy">${(showAllRecords ? hasEnded : isGameFinished(gameObj.isEnding)) ? '🏆 엔딩 완료' : '진행 중'}</span>`;
-    document.getElementById('modalGamePlatformZone').innerHTML = `<span id="modalGamePlatform">${showAllRecords ? platforms.join(', ') : gameObj.platform}</span>`;
-    document.getElementById('modalSteamLinkZone').innerHTML = gameObj.steamAppId
-        ? `연결됨 (AppID: ${gameObj.steamAppId})`
+    document.getElementById('modalGamePlatformZone').innerHTML = `<span id="modalGamePlatform">${escapeHtml(showAllRecords ? platforms.join(', ') : gameObj.platform)}</span>`;
+    const steamAppId = String(gameObj.steamAppId || '').trim();
+    document.getElementById('modalSteamLinkZone').textContent = /^\d+$/.test(steamAppId)
+        ? `연결됨 (AppID: ${steamAppId})`
         : '아직 연결하지 않았습니다.';
     
     let commonReview = "";
@@ -883,7 +1001,7 @@ function openDetailModalById(id, options = {}) {
     document.getElementById('btnDelete').style.display = 'inline-block';
     document.getElementById('btnSteamLink').style.display = 'inline-block';
     document.getElementById('btnSave').style.display = 'none';
-    document.getElementById('gameModal').style.display = "flex";
+    setModalVisibility(document.getElementById('gameModal'), true);
 }
 
 function openDetailModalByTitle(title) {
@@ -921,7 +1039,7 @@ function rebuildTimelineUI(gamesArray) {
     allStructuredMemos.forEach(m => {
         validMemoCount++;
         let item = document.createElement('div'); item.className = 'timeline-item';
-        item.innerHTML = `<div class="timeline-date">📅 기록 기간: ${m.date}</div><div class="timeline-text">${m.text}</div>`;
+        item.innerHTML = `<div class="timeline-date">📅 기록 기간: ${escapeHtml(m.date)}</div><div class="timeline-text">${escapeHtml(m.text)}</div>`;
         timelineContainer.appendChild(item);
     });
 
@@ -967,14 +1085,14 @@ function enableEditMode() {
     let target = localEvents.find(e => e.id === currentSelectedEventId); let gameObj = target.extendedProps;
     document.getElementById('quickMemoZone').style.display = 'none';
     document.getElementById('btnSteamLink').style.display = 'none';
-    document.getElementById('modalGameTitle').innerHTML = `<input type="text" id="editTitle" class="edit-input" value="${gameObj.title}">`;
+    document.getElementById('modalGameTitle').innerHTML = `<input type="text" id="editTitle" class="edit-input" value="${escapeHtml(gameObj.title)}">`;
     document.getElementById('modalGameTimeZone').innerHTML = `<input type="number" step="0.1" id="editTime" class="edit-input" value="${gameObj.time}"> 시간`;
     document.getElementById('modalGameStartZone').innerHTML = isAllRecordsDetailMode
-        ? `<span id="editStart">${gameObj.startDate}</span><small> 모든 기록에서는 날짜를 수정할 수 없습니다.</small>`
-        : `<input type="text" id="editStart" class="edit-input" value="${gameObj.startDate}">`;
+        ? `<span id="editStart">${escapeHtml(gameObj.startDate)}</span><small> 모든 기록에서는 날짜를 수정할 수 없습니다.</small>`
+        : `<input type="text" id="editStart" class="edit-input" value="${escapeHtml(gameObj.startDate)}">`;
     document.getElementById('modalGameEndZone').innerHTML = isAllRecordsDetailMode
-        ? `<span id="editEnd">${gameObj.endDate || '진행 중'}</span><small> 모든 기록에서는 날짜를 수정할 수 없습니다.</small>`
-        : `<input type="text" id="editEnd" class="edit-input" value="${gameObj.endDate}">`;
+        ? `<span id="editEnd">${escapeHtml(gameObj.endDate || '진행 중')}</span><small> 모든 기록에서는 날짜를 수정할 수 없습니다.</small>`
+        : `<input type="text" id="editEnd" class="edit-input" value="${escapeHtml(gameObj.endDate)}">`;
     
     document.getElementById('modalGameTrophyZone').innerHTML = `
         <select id="editEnding" class="edit-input">
@@ -987,7 +1105,7 @@ function enableEditMode() {
 
     let rawTextForEdit = gameObj.memo || '';
     if (rawTextForEdit.startsWith('[{') && rawTextForEdit.endsWith('}]')) { try { let arr = JSON.parse(rawTextForEdit); rawTextForEdit = arr.map(m => `[${m.date}] ${m.text}`).join('\n'); } catch(e){} }
-    document.getElementById('modalGameMemoTimeline').innerHTML = `<textarea id="editMemo" class="edit-input" style="height:60px; resize:none;">${rawTextForEdit}</textarea>`;
+    document.getElementById('modalGameMemoTimeline').innerHTML = `<textarea id="editMemo" class="edit-input" style="height:60px; resize:none;">${escapeHtml(rawTextForEdit)}</textarea>`;
     document.getElementById('btnEdit').style.display = 'none'; document.getElementById('btnSave').style.display = 'inline-block';
 }
 
@@ -1025,7 +1143,7 @@ function saveEditedData() {
     let calcEnd = new Date(newEnd ? newEnd : newStart); calcEnd.setDate(calcEnd.getDate() + 1);
     target.end = calcEnd.toISOString().split('T')[0];
 
-    target.extendedProps.title = newTitle; target.extendedProps.time = newTime; target.extendedProps.startDate = newStart;
+    target.extendedProps.title = newTitle; setRecordMinutes(target.extendedProps, Math.round(newTime * 60)); target.extendedProps.startDate = newStart;
     target.extendedProps.endDate = newEnd ? newEnd : ''; target.extendedProps.rawEndDate = newEnd ? newEnd : newStart;
     target.extendedProps.isEnding = document.getElementById('editEnding').value; target.extendedProps.platform = document.getElementById('editPlatform').value;
     
@@ -1054,19 +1172,17 @@ function deleteCurrentGame() {
     } 
 }
 
-function closeGameModal() { document.getElementById('gameModal').style.display = "none"; if (currentSelectedGameTitle) { refreshUI(); } }
+function closeGameModal() { setModalVisibility(document.getElementById('gameModal'), false); if (currentSelectedGameTitle) { refreshUI(); } }
 
 function openUsageGuide() {
     const guide = document.getElementById('usageGuideModal');
-    guide.style.display = 'flex';
-    guide.setAttribute('aria-hidden', 'false');
+    setModalVisibility(guide, true);
     document.getElementById('closeUsageGuide').focus();
 }
 
 function closeUsageGuide() {
     const guide = document.getElementById('usageGuideModal');
-    guide.style.display = 'none';
-    guide.setAttribute('aria-hidden', 'true');
+    setModalVisibility(guide, false);
     document.getElementById('usageGuideButton').focus();
 }
 
@@ -1075,7 +1191,7 @@ function renderBetaSettings() {
     document.getElementById('calendarBlockStyle').value = settings.calendarBlockStyle;
     document.getElementById('showSteamTotalOnCalendar').value = String(settings.showSteamTotalOnCalendar);
     document.getElementById('themeMode').value = settings.themeMode;
-    document.getElementById('platformSettingsList').innerHTML = settings.platforms.map((item, index) => `<div class="platform-setting-row"><span>${item.name}</span><input type="color" value="${item.color}" data-platform-index="${index}"><button type="button" data-remove-platform="${index}">제거</button></div>`).join('');
+    document.getElementById('platformSettingsList').innerHTML = settings.platforms.map((item, index) => `<div class="platform-setting-row"><span>${escapeHtml(item.name)}</span><input type="color" value="${escapeHtml(item.color)}" data-platform-index="${index}"><button type="button" data-remove-platform="${index}">제거</button></div>`).join('');
     document.getElementById('platformSettingsList').querySelectorAll('[data-remove-platform]').forEach(button => button.addEventListener('click', () => {
         settings.platforms.splice(Number(button.dataset.removePlatform), 1); saveBetaSettings(settings); renderBetaSettings();
     }));
@@ -1083,8 +1199,8 @@ function renderBetaSettings() {
     const history = JSON.parse(localStorage.getItem('game_effect_edit_history') || '[]');
     document.getElementById('editHistoryList').innerHTML = history.length ? history.map((item, index) => {
         const details = (item.details || []).filter(detail => detail !== '변경한 내용 없음');
-        const detailHtml = details.length ? details.map(detail => `<small>${detail}</small>`).join('') : '<small>이전 버전에서 남은 기록이라 상세 변경값이 없습니다.</small>';
-        return `<div class="edit-history-item"><span><strong>${item.at} · ${item.action}: ${item.title}</strong>${detailHtml}</span>${item.snapshot ? `<button type="button" data-undo-history="${index}">되돌리기</button>` : ''}</div>`;
+        const detailHtml = details.length ? details.map(detail => `<small>${escapeHtml(detail)}</small>`).join('') : '<small>이전 버전에서 남은 기록이라 상세 변경값이 없습니다.</small>';
+        return `<div class="edit-history-item"><span><strong>${escapeHtml(item.at)} · ${escapeHtml(item.action)}: ${escapeHtml(item.title)}</strong>${detailHtml}</span>${item.snapshot ? `<button type="button" data-undo-history="${index}">되돌리기</button>` : ''}</div>`;
     }).join('') : '아직 편집 기록이 없습니다.';
     document.getElementById('editHistoryList').querySelectorAll('[data-undo-history]').forEach(button => button.addEventListener('click', () => undoBetaHistory(Number(button.dataset.undoHistory))));
 }
@@ -1216,8 +1332,8 @@ function undoBetaHistory(index) {
 }
 
 function applyBetaTheme() { document.body.classList.toggle('light-theme', getBetaSettings().themeMode === 'light'); }
-function openSettings() { renderBetaSettings(); document.getElementById('settingsModal').style.display = 'flex'; document.getElementById('settingsModal').setAttribute('aria-hidden', 'false'); }
-function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; document.getElementById('settingsModal').setAttribute('aria-hidden', 'true'); }
+function openSettings() { renderBetaSettings(); setModalVisibility(document.getElementById('settingsModal'), true); }
+function closeSettings() { setModalVisibility(document.getElementById('settingsModal'), false); }
 function saveSettingsFromModal() {
     const settings = getBetaSettings();
     settings.calendarBlockStyle = document.getElementById('calendarBlockStyle').value;
@@ -1274,6 +1390,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let savedWebAppUrl = localStorage.getItem('user_local_web_app_url');
     if (savedWebAppUrl) { document.getElementById('webAppUrlInput').value = savedWebAppUrl; }
 
+    const savedSheetSyncToken = localStorage.getItem('user_local_sheet_sync_token');
+    if (savedSheetSyncToken && document.getElementById('sheetSyncTokenInput')) {
+        document.getElementById('sheetSyncTokenInput').value = savedSheetSyncToken;
+    }
+
     const savedSteamId = localStorage.getItem('user_steam_id');
     if (savedSteamId && document.getElementById('steamIdInput')) {
         document.getElementById('steamIdInput').value = savedSteamId;
@@ -1314,6 +1435,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (cachedEvents) {
         try {
             localEvents = JSON.parse(cachedEvents);
+            if (migrateRecordDataModel()) saveToLocalStorage();
             refreshUI();
         } catch(e) {
             if (savedUrl) { forceFetchSpreadsheetData(); }

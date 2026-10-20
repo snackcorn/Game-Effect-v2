@@ -1,9 +1,11 @@
 // Steam 상점의 한국어 검색 결과를 조회합니다. API 키는 필요하지 않습니다.
+const { applyRateLimit } = require('./rate-limit');
 module.exports = async (req, res) => {
     if (req.method !== 'GET') {
         res.setHeader('Allow', 'GET');
         return res.status(405).json({ error: 'GET 요청만 사용할 수 있습니다.' });
     }
+    if (applyRateLimit(req, res, { key: 'store-search', limit: 60 })) return;
 
     const term = String(req.query.term || '').trim();
     if (!term || term.length > 120) return res.status(400).json({ error: '게임 제목을 확인해 주세요.' });

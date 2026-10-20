@@ -47,8 +47,8 @@
 
 더 많은 내용을 함께 저장하려면 아래처럼 첫 줄을 만드세요.
 
-| 이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간 | 기록 ID | 플레이시간(분) | 달력 연결 시작일 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 ## 새 기록을 구글 시트에 저장하기
 
@@ -63,18 +63,24 @@
 3. 저장 버튼을 누릅니다.
 
 ```javascript
-const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간'];
+const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일'];
+const SYNC_TOKEN = PropertiesService.getScriptProperties().getProperty('GAME_EFFECT_SYNC_TOKEN');
+
+function requireToken(token) {
+  if (!SYNC_TOKEN || String(token || '') !== SYNC_TOKEN) throw new Error('인증되지 않은 시트 동기화 요청입니다.');
+}
 
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
+    requireToken(data.token);
     if (data.action === 'createTemplate') {
       getYearSheet(new Date().getFullYear());
       return json({ result: 'success' });
     }
-    if (data.action === 'replaceAll') {
+    if (data.action === 'upsertRecords') {
       const records = Array.isArray(data.records) ? data.records : [];
-      replaceAllRecords(records);
+      upsertRecords(records);
       return json({ result: 'success', count: records.length });
     }
     const sheet = getYearSheet(getYear(data.startDate));
@@ -95,37 +101,42 @@ function getYearSheet(year) {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   const name = String(year);
   const sheet = spreadsheet.getSheetByName(name) || spreadsheet.insertSheet(name);
+  const existing = sheet.getLastRow() ? sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), HEADERS.length)).getValues()[0] : [];
   if (sheet.getLastRow() === 0) sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+  else HEADERS.forEach((header, index) => { if (existing[index] !== header) sheet.getRange(1, index + 1).setValue(header); });
   return sheet;
 }
 
 function toRow(data) {
-  return [data.title || '', data.startDate || '', data.endDate || '', data.platform || '', Number(data.time || 0), data.isEnding || 'x', data.memo || '', data.review || '', data.steamAppId || '', data.steamTotal ?? ''];
+  return [data.title || '', data.startDate || '', data.endDate || '', data.platform || '', Number(data.time || 0), data.isEnding || 'x', data.memo || '', data.review || '', data.steamAppId || '', data.steamTotal ?? '', data.recordId || '', Number(data.playtimeMinutes || Math.round(Number(data.time || 0) * 60)), data.parentAppId || '', data.isLauncherAllocation ? 'Y' : '', data.calendarLinkStart || ''];
 }
 
-function replaceAllRecords(records) {
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const groups = {};
-  records.forEach(record => {
-    const year = getYear(record.startDate);
-    if (!groups[year]) groups[year] = [];
-    groups[year].push(record);
-  });
-  spreadsheet.getSheets().forEach(sheet => {
-    if (/^\d{4}$/.test(sheet.getName())) {
-      sheet.clearContents();
-      sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-    }
-  });
-  Object.keys(groups).forEach(year => {
+function upsertRecords(records) {
+  const byYear = {};
+  records.forEach(record => (byYear[getYear(record.startDate)] ||= []).push(record));
+  Object.keys(byYear).forEach(year => {
     const sheet = getYearSheet(year);
-    const rows = groups[year].map(toRow);
-    if (rows.length) sheet.getRange(2, 1, rows.length, HEADERS.length).setValues(rows);
+    const values = sheet.getDataRange().getValues();
+    const idToRow = new Map();
+    const legacyToRow = new Map();
+    values.slice(1).forEach((row, index) => {
+      if (row[10]) idToRow.set(String(row[10]), index + 2);
+      else legacyToRow.set(legacyKeyFromRow(row), index + 2);
+    });
+    byYear[year].forEach(record => {
+      const row = toRow(record);
+      const rowNumber = idToRow.get(String(record.recordId || '')) || legacyToRow.get(legacyKeyFromRecord(record));
+      if (rowNumber) sheet.getRange(rowNumber, 1, 1, HEADERS.length).setValues([row]);
+      else sheet.appendRow(row);
+    });
   });
 }
+function legacyKeyFromRow(row) { return [row[0], row[1], row[2], row[3], row[4], row[8], row[9]].map(value => String(value ?? '')).join('\u001F'); }
+function legacyKeyFromRecord(record) { return [record.title, record.startDate, record.endDate, record.platform, Number(record.time || 0), record.steamAppId, record.steamTotal ?? ''].map(value => String(value ?? '')).join('\u001F'); }
 
 function doGet(e) {
   const p = e.parameter || {};
+  if (!SYNC_TOKEN || String(p.token || '') !== SYNC_TOKEN) return jsonp({ result: 'error', message: '인증되지 않은 요청입니다.' }, p.callback);
   if (p.action === 'gameRecords') return jsonp({ result: 'success', records: getAllRecords() }, p.callback);
   return jsonp({ error: '잘못된 요청입니다.' }, p.callback);
 }
@@ -146,9 +157,9 @@ function getAllRecords() {
       return item instanceof Date ? Utilities.formatDate(item, Session.getScriptTimeZone(), 'yyyy-MM-dd') : item;
     };
     values.slice(1).forEach(row => records.push({
-      title: value(row, '이름'), startDate: value(row, '시작일'), endDate: value(row, '종료일'),
+      recordId: value(row, '기록 ID'), title: value(row, '이름'), startDate: value(row, '시작일'), endDate: value(row, '종료일'),
       platform: value(row, '플랫폼'), time: value(row, '시간'), isEnding: value(row, '엔딩여부'),
-      memo: value(row, '메모'), review: value(row, '한줄평'), steamAppId: value(row, 'Steam AppID'), steamTotal: value(row, 'Steam 누적시간')
+      memo: value(row, '메모'), review: value(row, '한줄평'), steamAppId: value(row, 'Steam AppID'), steamTotal: value(row, 'Steam 누적시간'), playtimeMinutes: value(row, '플레이시간(분)'), parentAppId: value(row, '런처 부모 AppID'), isLauncherAllocation: value(row, '런처 배분 기록') === 'Y', calendarLinkStart: value(row, '달력 연결 시작일')
     }));
   });
   return records;
@@ -175,7 +186,10 @@ function jsonp(data, callback) {
 2. 유형은 **웹 앱**을 선택합니다.
 3. 실행 계정은 **나**, 사용할 수 있는 사람은 **모든 사용자**로 선택합니다.
 4. 배포 후 나오는 `/exec` 주소를 복사합니다.
-5. Game Effect의 **구글 시트 저장 주소** 칸에 붙여 넣고 **연결 정보 저장**을 누릅니다.
+5. Apps Script의 **프로젝트 설정 → 스크립트 속성**에서 `GAME_EFFECT_SYNC_TOKEN`을 만들고, 12자 이상의 임의의 긴 비밀 값을 넣습니다.
+6. 배포 후 나오는 `/exec` 주소를 Game Effect의 **구글 시트 저장 주소** 칸에, 같은 비밀 값을 **시트 동기화 키** 칸에 넣고 **연결 정보 저장**을 누릅니다.
+
+`GAME_EFFECT_SYNC_TOKEN`은 시트에 적거나 GitHub·스크린샷에 올리지 마세요. 키를 잊었거나 노출했다면 Apps Script 속성에서 새 값으로 바꾸고, 사이트에도 같은 새 값을 다시 저장하면 됩니다.
 
 ## 기록 도구
 
@@ -186,6 +200,29 @@ function jsonp(data, callback) {
 - **Excel로 저장**: 현재 기록을 시작일 연도별 탭으로 나눈 Excel 파일로 내려받습니다.
 
 ## Steam 연결하기
+
+### v2.30 변경 사항
+
+- 시트 동기화 키의 최소 길이를 12자로 조정했습니다. 짧아진 만큼 추측하기 쉬운 단어 대신 영문·숫자·기호를 섞어 사용하세요.
+
+### v2.29 변경 사항
+
+- 구글 시트 웹 앱은 `GAME_EFFECT_SYNC_TOKEN`이 일치할 때만 읽기·저장을 처리합니다. 기존 Apps Script를 새 코드로 바꾸고 스크립트 속성 및 사이트의 **시트 동기화 키**를 설정해야 합니다.
+- 시트·사용자 입력을 화면에 표시할 때 HTML이 아닌 텍스트로 처리하도록 보완했습니다.
+- Steam 프록시 요청에 IP 기준의 짧은 요청 제한을 추가했습니다. 서버리스 인스턴스 단위의 1차 보호이므로, 서비스 규모가 커지면 Vercel/Upstash 같은 분산 제한 도구를 추가하는 것을 권장합니다.
+
+### v2.28 변경 사항
+
+- 최근 Steam 동기화는 같은 날짜에만 합산하고, 다른 날짜에는 항상 새 기록을 만듭니다. 이전 기록이 14일 이내면 달력에서 바 형식으로 이을지 선택할 수 있습니다.
+- Steam 연결이 없는 기록은 제목과 플랫폼을 함께 비교해 같은 게임을 판단합니다.
+
+### v2.27 변경 사항
+
+- 플레이시간 집계는 내부적으로 분 단위 정수로 처리해 여러 기록을 더할 때 발생하던 반올림 오차를 줄였습니다.
+- 시트에 **기록 ID**, **플레이시간(분)**, 통합 런처 배분 정보를 저장합니다. 기존 행은 첫 병합 저장 때 같은 내용의 행을 찾아 ID를 추가하며, 시트에만 있는 행은 삭제하지 않습니다.
+- 수동 동기화와 사이트에서 시트에 저장하는 작업 전에 시트 변경 경고를 표시합니다. 로컬 기록이 비어 있으면 저장을 중단하고 시트를 먼저 불러오도록 안내합니다.
+- 24시간을 넘는 Steam 증가분은 자동으로 오늘에 몰아넣지 않고, 마지막 실행일에 별도 기록할지 확인합니다.
+- 모바일 모달은 동적 화면 높이와 Safe Area를 사용하고, 열려 있는 동안 본문 스크롤을 잠급니다.
 
 ### v2.26 변경 사항
 
@@ -213,8 +250,7 @@ function jsonp(data, callback) {
 
 ### v2.21 변경 사항
 
-- 최근 플레이 동기화 중 최근 7일 안에 같은 Steam 게임 기록이 있으면, 게임별로 기존 기록에 증가 시간을 이어 붙일지 오늘 날짜의 새 기록으로 남길지 선택할 수 있습니다.
-- 통합 최초 불러오기와 자동 처리 모드에는 선택 창이 나타나지 않으며, 기존의 안전한 동기화 규칙을 그대로 사용합니다.
+- 이 버전의 최근 7일 이어 붙이기 기능은 v2.28에서 같은 날짜 합산 및 달력 표시 선택 방식으로 교체되었습니다.
 
 ### v2.20 변경 사항
 
@@ -269,7 +305,7 @@ function jsonp(data, callback) {
 - 연도별 요약의 게임 목록을 플레이타임 많은 순, 시작일 최신순, 엔딩 완료 우선으로 정렬할 수 있습니다.
 - **Steam 날짜 재정렬**은 Steam 누적시간이 비어 있는 기존 시트 기록도 처리합니다. Steam AppID가 연결되어 있고 Steam이 마지막 실행일을 제공하는 경우에만 날짜를 옮깁니다.
 
-화면에는 SteamID64만 입력하고 저장합니다. Steam API 키는 Vercel 서버의 환경 변수에만 보관되므로 브라우저·구글 시트·GitHub에 저장되지 않습니다. 게임 이름을 입력하면 플레이 시간 계산에 활용할 수 있고, **최근 플레이 동기화**로 새 플레이 시간을 기록할 수 있습니다. 최근 7일 안에 Steam AppID가 같은 기록이 있으면, 기존 기록에 이어 붙일지 새 행으로 남길지 선택합니다. 설정에 등록한 통합 런처는 하위 게임을 자동 판별할 수 없으므로, 증가 시간을 기록할 하위 게임을 선택합니다. 기존 시트 기록의 종료일은 Steam 마지막 실행일로 변경하지 않습니다. 처음 동기화하는 게임은 Steam의 실제 마지막 실행일이 있는 경우에만 기록하며, 날짜 정보가 없는 게임은 오늘 날짜로 임의 추가하지 않습니다. 이후 동기화는 동기화한 날짜에 기록합니다. 총 플레이 시간이 0.3시간(18분) 미만인 게임은 제외합니다.
+화면에는 SteamID64만 입력하고 저장합니다. Steam API 키는 Vercel 서버의 환경 변수에만 보관되므로 브라우저·구글 시트·GitHub에 저장되지 않습니다. 게임 이름을 입력하면 플레이 시간 계산에 활용할 수 있고, **최근 플레이 동기화**로 새 플레이 시간을 기록할 수 있습니다. 같은 날짜의 Steam 기록만 합산하며, 날짜가 다르면 새 행으로 남깁니다. 이전 기록이 14일 이내이면 달력에서 바 형식으로 이을지 독립 블록으로 둘지 선택하고, 14일 이상 비면 독립 블록으로 표시합니다. 설정에 등록한 통합 런처는 하위 게임을 자동 판별할 수 없으므로, 동기화할 때마다 증가 시간을 기록할 하위 게임을 선택합니다. 기존 시트 기록의 종료일은 Steam 마지막 실행일로 변경하지 않습니다. 처음 동기화하는 게임은 Steam의 실제 마지막 실행일이 있는 경우에만 기록하며, 날짜 정보가 없는 게임은 오늘 날짜로 임의 추가하지 않습니다. 이후 동기화는 동기화한 날짜에 기록합니다. 총 플레이 시간이 0.3시간(18분) 미만인 게임은 제외합니다.
 
 - **Steam 기록 한꺼번에 연결**: 기존 Steam 기록과 라이브러리를 비교해 이름이 확실히 일치하는 기록에 AppID를 연결합니다. 영어 API 이름과 다르면 Steam 상점의 한국어 검색 결과와 내 라이브러리 AppID를 대조합니다.
 - **Steam 상점 이름으로 제목 정리**: Steam 상점의 한국어 검색 결과로 AppID 연결과 제목 정리 후보를 한꺼번에 보여 주며, 선택한 항목만 변경합니다.

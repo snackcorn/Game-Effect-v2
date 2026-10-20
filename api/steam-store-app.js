@@ -1,9 +1,11 @@
 // Steam 상점의 지역화된 게임 이름을 가져옵니다. API 키는 필요하지 않습니다.
+const { applyRateLimit } = require('./rate-limit');
 module.exports = async (req, res) => {
     if (req.method !== 'GET') {
         res.setHeader('Allow', 'GET');
         return res.status(405).json({ error: 'GET 요청만 사용할 수 있습니다.' });
     }
+    if (applyRateLimit(req, res, { key: 'store-app', limit: 60 })) return;
 
     const appId = String(req.query.appid || '').trim();
     if (!/^\d+$/.test(appId)) return res.status(400).json({ error: 'Steam AppID를 확인해 주세요.' });

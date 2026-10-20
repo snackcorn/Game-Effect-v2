@@ -3,10 +3,15 @@
 // ==========================================
 
 const MIN_STEAM_SYNC_PLAYTIME_MINUTES = 18;
+const MAX_AUTOMATIC_STEAM_DELTA_MINUTES = 24 * 60;
 const STEAM_STORE_LOOKUP_CONCURRENCY = 5;
 const STEAM_LAUNCHER_REGISTRY_STORAGE_KEY = 'steam_launcher_registry';
 const STEAM_LAUNCHER_TITLE_MAP_STORAGE_KEY = 'steam_launcher_title_mappings';
 const DEFAULT_STEAM_LAUNCHER_REGISTRY = [{ title: 'Call of Duty®', appId: '1938090', children: [] }];
+const STEAM_TITLE_ALIAS_MAP = {
+    '배그': 'PUBG', '펍지': 'PUBG', '산나비': 'SANABI', '콜오브듀티': 'Call of Duty',
+    '레인보우식스': 'Tom Clancy\'s Rainbow Six Siege', '위쳐3': 'The Witcher 3', '호그와트레거시': 'Hogwarts Legacy'
+};
 let pendingSteamTitleChanges = [];
 const steamStoreTitleCache = new Map();
 const steamStoreSearchCache = new Map();
@@ -167,10 +172,17 @@ function searchSteamStoreKoreanTitles(title) {
     const key = String(title || '').trim().toLocaleLowerCase();
     if (!key) return Promise.resolve([]);
     if (!steamStoreSearchCache.has(key)) {
-        const request = fetch(`/api/steam-store-search?term=${encodeURIComponent(title)}`)
+        const request = fetch(`/api/steam-store-search?term=${encodeURIComponent(String(title).trim())}`)
             .then(async response => {
                 const data = await response.json().catch(() => ({}));
-                return response.ok && Array.isArray(data.items) ? data.items : [];
+                const items = response.ok && Array.isArray(data.items) ? data.items : [];
+                if (items.length) return items;
+                const compact = normalizeSteamTitle(title).replace(/\s/g, '');
+                const alias = STEAM_TITLE_ALIAS_MAP[compact];
+                if (!alias) return [];
+                const retry = await fetch(`/api/steam-store-search?term=${encodeURIComponent(alias)}`);
+                const retried = await retry.json().catch(() => ({}));
+                return retry.ok && Array.isArray(retried.items) ? retried.items : [];
             })
             .catch(() => []);
         steamStoreSearchCache.set(key, request);
@@ -832,7 +844,15 @@ function getSteamRecordedTotal(existingRecords) {
         });
     return recordsWithSteamTotal.length
         ? Number(recordsWithSteamTotal[recordsWithSteamTotal.length - 1].extendedProps.steamTotal)
-        : existingRecords.reduce((sum, record) => sum + Number(record.extendedProps.time || 0), 0);
+        : existingRecords.reduce((sum, record) => sum + getRecordMinutes(record) / 60, 0);
+}
+
+function confirmLargeSteamDelta(game, deltaMinutes) {
+    return confirm(
+        `⚠️ Steam 플레이시간 확인\n\n${game.name}의 증가 시간이 ${formatPlaytime(deltaMinutes, 'hm')}입니다.\n` +
+        `하루(24시간)를 넘는 증가분은 오늘 날짜에 자동 기록하지 않습니다.\n\n` +
+        `확인: 마지막 실행일에 별도 기록\n취소: 이번 동기화에서는 건너뛰기`
+    );
 }
 
 function getSteamLauncherAllocationCandidates(games) {
@@ -841,8 +861,8 @@ function getSteamLauncherAllocationCandidates(games) {
         if (!shouldSyncSteamGame(game) || !launcher) return [];
         const steamAppId = String(game.appid || '');
         const existingRecords = localEvents.filter(record => String(record.extendedProps.steamAppId || '') === steamAppId);
-        const currentTotal = parseFloat((Number(game.playtime_forever || 0) / 60).toFixed(1));
-        const diffHours = parseFloat((currentTotal - getSteamRecordedTotal(existingRecords)).toFixed(1));
+        const currentTotal = Number(game.playtime_forever || 0) / 60;
+        const diffHours = (Number(game.playtime_forever || 0) - Math.round(getSteamRecordedTotal(existingRecords) * 60)) / 60;
         const hasUsableFirstSyncDate = Boolean(getSteamLastPlayedDateOrEmpty(game.rtime_last_played));
         return diffHours > 0 && (existingRecords.length > 0 || hasUsableFirstSyncDate)
             ? [{ steamAppId, launcherTitle: launcher.title, children: launcher.children }]
@@ -880,8 +900,7 @@ function requestSteamLauncherAllocation(candidates) {
         list.appendChild(item);
     });
 
-    modal.style.display = 'flex';
-    modal.setAttribute('aria-hidden', 'false');
+    setModalVisibility(modal, true);
     return new Promise(resolve => {
         steamLauncherAllocationResolver = resolve;
     });
@@ -889,8 +908,7 @@ function requestSteamLauncherAllocation(candidates) {
 
 function finishSteamLauncherAllocation(allocations) {
     const modal = document.getElementById('steamLauncherAllocationModal');
-    modal.style.display = 'none';
-    modal.setAttribute('aria-hidden', 'true');
+    setModalVisibility(modal, false);
     const resolve = steamLauncherAllocationResolver;
     steamLauncherAllocationResolver = null;
     if (resolve) resolve(allocations);
@@ -916,6 +934,37 @@ function confirmSteamLauncherAllocation() {
 
 function cancelSteamLauncherAllocation() {
     finishSteamLauncherAllocation(null);
+}
+
+function getLatestPreviousSteamRecord(records, title, syncDate) {
+    return records
+        .filter(record => String(record.title || '') === String(title || ''))
+        .filter(record => String(record.extendedProps.startDate || '') < syncDate)
+        .sort((left, right) => {
+            const leftDate = String(left.extendedProps.rawEndDate || left.extendedProps.endDate || left.extendedProps.startDate || '');
+            const rightDate = String(right.extendedProps.rawEndDate || right.extendedProps.endDate || right.extendedProps.startDate || '');
+            return rightDate.localeCompare(leftDate) || right.id.localeCompare(left.id);
+        })[0] || null;
+}
+
+function getDaysBetweenDates(earlierDate, laterDate) {
+    const earlier = new Date(`${earlierDate}T00:00:00`);
+    const later = new Date(`${laterDate}T00:00:00`);
+    return Math.floor((later - earlier) / 86400000);
+}
+
+function chooseSteamCalendarDisplay(previousRecord, title, syncDate) {
+    if (!previousRecord) return '';
+    const previousDate = String(previousRecord.extendedProps.rawEndDate || previousRecord.extendedProps.endDate || previousRecord.extendedProps.startDate || '');
+    const gapDays = getDaysBetweenDates(previousDate, syncDate);
+    // 14일 이상 비면 독립 블록으로 표시합니다. 데이터는 어느 경우든 별도 날짜 기록입니다.
+    if (!previousDate || gapDays >= 14) return '';
+    const connectAsBar = confirm(
+        `📅 최근 Steam 기록 표시\n\n${title}\n이전 기록: ${previousDate}\n이번 기록: ${syncDate}\n\n` +
+        `시간은 날짜별로 따로 저장됩니다. 달력에서만 이전 기록부터 바 형식으로 이어서 표시할까요?\n\n` +
+        `확인: 바 형식으로 이어 보기\n취소: ${syncDate}의 독립 블록으로 보기`
+    );
+    return connectAsBar ? previousDate : '';
 }
 
 function getRecentSteamRecordCandidates(games, todayStr, launcherTitleByAppId = new Map()) {
@@ -991,8 +1040,7 @@ function requestRecentSteamRecordHandling(candidates) {
         list.appendChild(item);
     });
 
-    modal.style.display = 'flex';
-    modal.setAttribute('aria-hidden', 'false');
+    setModalVisibility(modal, true);
     return new Promise(resolve => {
         recentSteamRecordChoiceResolver = resolve;
     });
@@ -1000,8 +1048,7 @@ function requestRecentSteamRecordHandling(candidates) {
 
 function finishRecentSteamRecordHandling(decisions) {
     const modal = document.getElementById('recentSteamRecordChoiceModal');
-    modal.style.display = 'none';
-    modal.setAttribute('aria-hidden', 'true');
+    setModalVisibility(modal, false);
     const resolve = recentSteamRecordChoiceResolver;
     recentSteamRecordChoiceResolver = null;
     if (resolve) resolve(decisions);
@@ -1048,15 +1095,11 @@ async function syncRecentSteamPlaytime(options = {}) {
         }
 
         const todayStr = formatLocalDate(new Date());
-        const askRecentRecordChoice = !silent && options.askRecentRecordChoice !== false;
-        const launcherTitleByAppId = askRecentRecordChoice
+        const askSteamChoices = !silent && options.askRecentRecordChoice !== false;
+        const launcherTitleByAppId = askSteamChoices
             ? await requestSteamLauncherAllocation(getSteamLauncherAllocationCandidates(games))
             : new Map();
         if (launcherTitleByAppId === null) return null;
-        const recentRecordHandlingByAppId = askRecentRecordChoice
-            ? await requestRecentSteamRecordHandling(getRecentSteamRecordCandidates(games, todayStr, launcherTitleByAppId))
-            : new Map();
-        if (recentRecordHandlingByAppId === null) return null;
 
         let updatedCount = 0;
         let skippedShortPlaytimeCount = 0;
@@ -1074,7 +1117,8 @@ async function syncRecentSteamPlaytime(options = {}) {
 
             const name = game.name;
             const steamAppId = String(game.appid || '');
-            const currentTotalSteamHours = parseFloat((game.playtime_forever / 60).toFixed(1));
+            const currentTotalSteamMinutes = Math.max(0, Math.round(Number(game.playtime_forever || 0)));
+            const currentTotalSteamHours = currentTotalSteamMinutes / 60;
 
             // Steam 동기화는 제목이 아니라 Steam AppID가 같은 기록만 합산합니다.
             const appIdRecords = steamAppId
@@ -1105,10 +1149,16 @@ async function syncRecentSteamPlaytime(options = {}) {
             const lastRecordedSteamTotal = recordsWithSteamTotal.length
                 ? Number(recordsWithSteamTotal[recordsWithSteamTotal.length - 1].extendedProps.steamTotal)
                 : null;
-            const recordedTotalHours = lastRecordedSteamTotal ?? existingRecords.reduce((sum, e) => sum + e.extendedProps.time, 0);
-            const diffHours = parseFloat((currentTotalSteamHours - recordedTotalHours).toFixed(1));
+            const recordedTotalMinutes = lastRecordedSteamTotal !== null
+                ? Math.round(lastRecordedSteamTotal * 60)
+                : existingRecords.reduce((sum, record) => sum + getRecordMinutes(record), 0);
+            const diffMinutes = currentTotalSteamMinutes - recordedTotalMinutes;
+            if (diffMinutes <= 0) continue;
+            const isLargeDelta = diffMinutes > MAX_AUTOMATIC_STEAM_DELTA_MINUTES;
+            if (isLargeDelta && !confirmLargeSteamDelta(game, diffMinutes)) continue;
+            const diffHours = diffMinutes / 60;
 
-            if (diffHours > 0) {
+            if (diffMinutes > 0) {
                 // 통합 최초 불러오기에서는 시트에 이미 적힌 시간을 먼저 유지하고,
                 // Steam 누적시간과의 차이만 마지막 실행일에 별도 기록합니다.
                 const selectedLauncherTitle = launcherTitleByAppId.get(steamAppId);
@@ -1128,7 +1178,7 @@ async function syncRecentSteamPlaytime(options = {}) {
                     && steamLastPlayedDate
                     && steamLastPlayedDate > latestRecordedDate
                 );
-                const syncDate = (isFirstSync || useLastPlayedForRemainder)
+                const syncDate = (isFirstSync || useLastPlayedForRemainder || isLargeDelta)
                     ? getSteamLastPlayedDate(game.rtime_last_played, todayStr)
                     : todayStr;
                 const syncMemo = isFirstSync
@@ -1136,26 +1186,28 @@ async function syncRecentSteamPlaytime(options = {}) {
                     : useLastPlayedForRemainder
                         ? '시트 기록 이후 Steam 잔여 시간 (마지막 실행일 기준)'
                     : '스팀 동기화 세션';
-                const selectedHandling = recentRecordHandlingByAppId.get(steamAppId);
-                const selectedRecentRecord = selectedHandling?.mode === 'append'
-                    ? localEvents.find(record => record.id === selectedHandling.recordId)
-                    : null;
-                // 최근 기록 선택 창에서 "이어서 붙이기"를 고르면 그 기록에 시간을 더합니다.
-                // 선택 창이 없는 자동 동기화는 기존처럼 같은 날짜 기록만 합칩니다.
+                // 같은 날짜만 합산합니다. 날짜가 다르면 언제나 새 데이터 행으로 남깁니다.
                 const sameDayRecord = existingRecords.find(record =>
                     (!selectedLauncherTitle || record.title === selectedLauncherTitle)
                     && record.extendedProps.startDate === syncDate
                     && (record.extendedProps.rawEndDate || record.extendedProps.endDate || syncDate) === syncDate
                 );
-                const recordToExtend = selectedRecentRecord || (!selectedHandling ? sameDayRecord : null);
+                const recordToExtend = sameDayRecord || null;
                 if (recordToExtend) {
-                    recordToExtend.extendedProps.time = parseFloat((Number(recordToExtend.extendedProps.time || 0) + diffHours).toFixed(1));
+                    setRecordMinutes(recordToExtend.extendedProps, getRecordMinutes(recordToExtend) + diffMinutes);
                     recordToExtend.extendedProps.steamTotal = currentTotalSteamHours;
                     mergedRecordCount++;
                 } else {
-                    const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours);
+                    const calendarLinkStart = askSteamChoices
+                        ? chooseSteamCalendarDisplay(getLatestPreviousSteamRecord(existingRecords, displayName, syncDate), displayName, syncDate)
+                        : '';
+                    const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours, {
+                        parentAppId: selectedLauncherTitle ? steamAppId : '',
+                        isLauncherAllocation: Boolean(selectedLauncherTitle),
+                        calendarLinkStart
+                    });
                     localEvents.push(newGame);
-                    if (selectedHandling?.mode === 'separate') separateRecordCount++;
+                    separateRecordCount++;
                 }
                 updatedCount++;
                 if (useLastPlayedForRemainder) lastPlayedRemainderCount++;

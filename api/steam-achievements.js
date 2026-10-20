@@ -1,11 +1,13 @@
 const STEAM_ID64_PATTERN = /^\d{17}$/;
 const STEAM_APP_ID_PATTERN = /^\d+$/;
+const { applyRateLimit } = require('./rate-limit');
 
 module.exports = async function handler(req, res) {
     if (req.method !== 'GET') {
         res.setHeader('Allow', 'GET');
         return res.status(405).json({ error: 'GET 요청만 사용할 수 있습니다.' });
     }
+    if (applyRateLimit(req, res, { key: 'achievements', limit: 30 })) return;
 
     const steamId = String(req.query.steamid || '').trim();
     const appId = String(req.query.appid || '').trim();
