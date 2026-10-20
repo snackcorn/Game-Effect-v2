@@ -6,7 +6,7 @@
 
 ```text
 발생 날짜와 시간:
-사이트 버전: v2.31
+사이트 버전: v2.32
 사용 기기 / 브라우저: 예) Android Chrome, Windows Chrome
 
 문제가 발생한 기능:

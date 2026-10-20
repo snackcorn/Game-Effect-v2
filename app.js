@@ -70,7 +70,10 @@ function createRecordId() {
 }
 
 function toPlaytimeMinutes(value, fallbackMinutes = null) {
-    if (Number.isInteger(Number(fallbackMinutes)) && Number(fallbackMinutes) >= 0) return Number(fallbackMinutes);
+    // 시트의 "플레이시간(분)" 열이 비어 있으면 null/빈 문자열을 0분으로
+    // 취급하지 않고, 기존 "시간" 열의 값을 사용합니다.
+    const hasFallbackMinutes = fallbackMinutes !== null && fallbackMinutes !== undefined && String(fallbackMinutes).trim() !== '';
+    if (hasFallbackMinutes && Number.isInteger(Number(fallbackMinutes)) && Number(fallbackMinutes) >= 0) return Number(fallbackMinutes);
     const hours = Number(value);
     return Number.isFinite(hours) && hours >= 0 ? Math.round(hours * 60) : 0;
 }
