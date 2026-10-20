@@ -9,6 +9,7 @@ let isAllRecordsDetailMode = false;
 let calendar = null;
 let shortPlaytimeCollapseScheduled = false;
 let calendarHoverCard = null;
+let workProgressDepth = 0;
 let steamSearchResultAppIds = new Set();
 let activeSteamTitleSearchToken = 0;
 let activeSteamTitleSearchKeyword = '';
@@ -135,6 +136,28 @@ function setModalVisibility(modal, visible) {
     if (!visible && isOpen) unlockBodyScroll();
     modal.style.display = visible ? 'flex' : 'none';
     modal.setAttribute('aria-hidden', String(!visible));
+}
+
+function beginWorkProgress(message = '작업 중입니다. 잠시만 기다려 주세요…') {
+    workProgressDepth += 1;
+    const toast = document.getElementById('workProgressToast');
+    const text = document.getElementById('workProgressMessage');
+    if (!toast || !text) return;
+    text.textContent = message;
+    toast.hidden = false;
+}
+
+function updateWorkProgress(message) {
+    const text = document.getElementById('workProgressMessage');
+    if (text) text.textContent = message;
+}
+
+function endWorkProgress() {
+    workProgressDepth = Math.max(0, workProgressDepth - 1);
+    if (workProgressDepth === 0) {
+        const toast = document.getElementById('workProgressToast');
+        if (toast) toast.hidden = true;
+    }
 }
 
 function syncAllRecordsSafely() {

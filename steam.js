@@ -255,6 +255,7 @@ async function bulkLinkSteamGames(options = {}) {
 
     button.disabled = true;
     button.innerText = '⏳ Steam 게임 비교 중...';
+    if (!silent) beginWorkProgress('Steam 게임 기록을 비교하는 중입니다…');
     try {
         const ownedGames = options.ownedGames || await loadSteamOwnedGames();
         const gamesByAppId = new Map(ownedGames.map(game => [String(game.appid || ''), game]));
@@ -290,6 +291,7 @@ async function bulkLinkSteamGames(options = {}) {
     } finally {
         button.disabled = false;
         button.innerText = '🔗 Steam 기록 한꺼번에 연결';
+        if (!silent) endWorkProgress();
     }
 }
 
@@ -395,6 +397,7 @@ async function initialCombinedSync() {
 
     button.disabled = true;
     button.innerText = '⏳ 시트와 Steam 불러오는 중...';
+    beginWorkProgress('시트와 Steam 기록을 함께 불러오는 중입니다…');
     try {
         localStorage.setItem('saved_game_sheet_url', sheetUrl);
         const [sheetRecords, ownedGames] = await Promise.all([
@@ -451,6 +454,7 @@ async function initialCombinedSync() {
     } finally {
         button.disabled = false;
         button.innerText = '⚡ 처음 데이터 불러오기';
+        endWorkProgress();
     }
 }
 
@@ -459,6 +463,7 @@ async function initialSteamOnlySync(button) {
 
     button.disabled = true;
     button.innerText = '⏳ Steam 불러오는 중...';
+    beginWorkProgress('Steam 기록을 처음 불러오는 중입니다…');
     try {
         const ownedGames = await loadSteamOwnedGames();
         button.innerText = '⏳ 기존 Steam 기록 연결 중...';
@@ -486,6 +491,7 @@ async function initialSteamOnlySync(button) {
     } finally {
         button.disabled = false;
         button.innerText = '⚡ 처음 데이터 불러오기';
+        endWorkProgress();
     }
 }
 
@@ -627,6 +633,7 @@ async function normalizeExistingSteamTitles(options = {}) {
 
     button.disabled = true;
     button.innerText = '⏳ Steam 이름 확인 중...';
+    if (!silent) beginWorkProgress('Steam 상점 이름을 확인하는 중입니다…');
     try {
         const ownedGames = options.ownedGames || await loadSteamOwnedGames();
         const gamesByAppId = new Map(ownedGames.map(game => [String(game.appid), game]));
@@ -674,6 +681,7 @@ async function normalizeExistingSteamTitles(options = {}) {
     } finally {
         button.disabled = false;
         button.innerText = '✏️ Steam 상점 이름으로 제목 정리';
+        if (!silent) endWorkProgress();
     }
 }
 
@@ -1084,6 +1092,7 @@ async function syncRecentSteamPlaytime(options = {}) {
 
     const syncBtns = document.querySelectorAll('button[onclick*="syncRecentSteamPlaytime"]');
     syncBtns.forEach(b => { b.disabled = true; b.innerText = "⏳ 스팀 통신 중..."; });
+    if (!silent) beginWorkProgress('Steam 최신 플레이시간을 확인하는 중입니다…');
 
     try {
         const games = options.ownedGames || await loadSteamOwnedGames();
@@ -1240,5 +1249,6 @@ async function syncRecentSteamPlaytime(options = {}) {
         return null;
     } finally {
         syncBtns.forEach(b => { b.disabled = false; b.innerText = "🔄 최근 플레이 동기화"; });
+        if (!silent) endWorkProgress();
     }
 }

@@ -27,7 +27,7 @@ function toggleSpreadsheetGuide() {
     let button = document.getElementById('spreadsheetGuideButton');
     let isVisible = guide.classList.toggle('is-visible');
     button.setAttribute('aria-expanded', String(isVisible));
-    button.innerText = isVisible ? '📕 처음 설정하기 닫기' : '📋 처음 설정하기';
+    button.innerText = isVisible ? '📕 구글 시트 처음 설정 ▴' : '📋 구글 시트 처음 설정 ▾';
 }
 
 function getSavedWebAppUrl() {
@@ -403,7 +403,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
     let oldScript = document.getElementById('googlesheet-jsonp-script');
     if (oldScript) oldScript.remove();
 
-    if (!rawJson || !rawJson.table) return;
+    if (!rawJson || !rawJson.table) { endWorkProgress(); return; }
 
     let parsedEvents = [];
 
@@ -433,7 +433,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
     let launcherAllocationIdx = cols.indexOf('런처 배분 기록');
     let calendarLinkStartIdx = cols.indexOf('달력 연결 시작일');
 
-    if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) return;
+    if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) { endWorkProgress(); return; }
 
     let startIndex = isHeaderInRows ? 1 : 0;
 
@@ -466,6 +466,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
     }
 
     applyIncomingSheetRecords(parsedEvents, '구글 시트');
+    endWorkProgress();
 };
 
 function parseGameRecordsPayload(payload) {
@@ -492,9 +493,12 @@ window.handleGameRecordsResponse = function(payload) {
     const parsedEvents = parseGameRecordsPayload(payload);
     if (!parsedEvents) {
         alert(`시트를 불러오지 못했습니다. ${payload?.message || '기존 기록은 유지됩니다.'}`);
+        endWorkProgress();
         return false;
     }
-    return applyIncomingSheetRecords(parsedEvents, '구글 시트');
+    const result = applyIncomingSheetRecords(parsedEvents, '구글 시트');
+    endWorkProgress();
+    return result;
 };
 
 function fetchAllYearTabsForInitialSync(webAppUrl) {
@@ -533,13 +537,15 @@ function fetchAllYearTabs(webAppUrl) {
     let script = document.createElement('script');
     script.id = 'game-records-jsonp-script';
     const authorizedUrl = buildAuthorizedWebAppUrl(webAppUrl, { action: 'gameRecords', callback: 'handleGameRecordsResponse' });
-    if (!authorizedUrl) return;
+    if (!authorizedUrl) return false;
     script.src = authorizedUrl;
     script.onerror = () => {
         script.remove();
+        endWorkProgress();
         alert('시트를 불러오지 못했습니다. Apps Script 코드를 새 코드로 바꾼 뒤 새 배포했는지 확인해 주세요.');
     };
     document.body.appendChild(script);
+    return true;
 }
 
 function forceFetchSpreadsheetData() {
@@ -552,10 +558,11 @@ function forceFetchSpreadsheetData() {
     }
 
     localStorage.setItem('saved_game_sheet_url', rawUrlInput);
+    beginWorkProgress('시트 기록을 불러오는 중입니다…');
 
     let webAppUrl = localStorage.getItem('user_local_web_app_url');
     if (webAppUrl) {
-        fetchAllYearTabs(webAppUrl);
+        if (!fetchAllYearTabs(webAppUrl)) endWorkProgress();
         return;
     }
 
@@ -564,7 +571,8 @@ function forceFetchSpreadsheetData() {
         fetch(csvCleanUrl)
             .then(response => { if (!response.ok) throw new Error(); return response.text(); })
             .then(csvText => { parseAndRenderCSV(csvText); })
-            .catch(() => alert("시트를 불러오지 못했습니다. 기존 기록은 유지됩니다."));
+            .catch(() => alert("시트를 불러오지 못했습니다. 기존 기록은 유지됩니다."))
+            .finally(endWorkProgress);
     } else {
         let oldScript = document.getElementById('googlesheet-jsonp-script');
         if (oldScript) oldScript.remove();
@@ -573,6 +581,7 @@ function forceFetchSpreadsheetData() {
         let script = document.createElement('script');
         script.id = 'googlesheet-jsonp-script';
         script.src = generatedTargetUrl;
+        script.onerror = () => { endWorkProgress(); alert('시트를 불러오지 못했습니다. 기존 기록은 유지됩니다.'); };
         document.body.appendChild(script);
     }
 }

@@ -654,6 +654,27 @@ h1 {
     object-fit: contain;
 }
 
+.work-progress-toast {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 2100;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(360px, calc(100vw - 32px));
+    padding: 13px 16px;
+    border: 1px solid #818cf8;
+    border-radius: 10px;
+    background: #1e1b4b;
+    color: #eef2ff;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .35);
+    font-weight: 700;
+}
+.work-progress-toast[hidden] { display: none; }
+.work-progress-spinner { width: 16px; height: 16px; flex: 0 0 auto; border: 3px solid #a5b4fc; border-right-color: transparent; border-radius: 50%; animation: work-progress-spin .75s linear infinite; }
+@keyframes work-progress-spin { to { transform: rotate(360deg); } }
+
 .usage-guide-content {
     max-width: 650px;
     max-height: calc(100vh - 48px);
@@ -823,4 +844,5 @@ body.light-theme .record-tools-help dd { color: #475569; }
     .steam-launcher-add-row input, .steam-launcher-child-add input { flex: 1 1 130px; }
     .sheet-header-example div { justify-content: space-between; }
     .floating-menu-button { left: 14px; bottom: 14px; width: 70px; height: 70px; }
+    .work-progress-toast { right: 16px; bottom: 16px; font-size: .9em; }
 }
