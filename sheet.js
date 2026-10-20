@@ -594,19 +594,23 @@ function confirmGoogleSheetWrite(actionLabel, recordCount) {
     );
 }
 
-function syncAllRecordsToGoogleSheet(options = {}) {
+function syncRecordsToGoogleSheet(records, options = {}) {
     let targetUrl = localStorage.getItem('user_local_web_app_url');
     if (!targetUrl) return Promise.resolve();
 
-    const records = localEvents.map(event => ({ ...event.extendedProps }));
-    if (records.length === 0) {
+    const normalizedRecords = (Array.isArray(records) ? records : [])
+        .map(record => ({ ...(record?.extendedProps || record || {}) }))
+        .filter(record => record.recordId || record.id);
+    if (normalizedRecords.length === 0) {
         if (!options.silent) alert('로컬 기록이 없어 시트에 저장하지 않았습니다. 먼저 시트 기록을 불러오거나 게임 기록을 추가해 주세요.');
         return Promise.resolve({ skipped: true });
     }
-    if (!options.skipConfirm && !confirmGoogleSheetWrite(options.actionLabel || '사이트 기록 저장', records.length)) return Promise.resolve({ cancelled: true });
-    return postWebAppData(targetUrl, { action: 'upsertRecords', records })
+    if (!options.skipConfirm && !confirmGoogleSheetWrite(options.actionLabel || '사이트 기록 저장', normalizedRecords.length)) return Promise.resolve({ cancelled: true });
+    return postWebAppData(targetUrl, { action: 'upsertRecords', records: normalizedRecords })
         .then(result => {
-            if (result.result !== 'success') throw new Error(result.message || '시트 병합 저장에 실패했습니다. Apps Script 코드를 v2.30 코드로 교체하고 새 배포했는지 확인해 주세요.');
+            if (result.result !== 'success' || Number(result.count) !== normalizedRecords.length) {
+                throw new Error(result.message || '시트가 최신 병합 저장을 확인하지 못했습니다. 사이트의 전체 Apps Script 코드를 다시 붙여 넣고 새 버전으로 배포해 주세요.');
+            }
             return result;
         })
         .catch(error => {
@@ -614,6 +618,14 @@ function syncAllRecordsToGoogleSheet(options = {}) {
             if (!options.silent) alert(`시트에 저장하지 못했습니다. ${error.message}`);
             return { error };
         });
+}
+
+function syncAllRecordsToGoogleSheet(options = {}) {
+    return syncRecordsToGoogleSheet(localEvents, options);
+}
+
+function syncChangedRecordsToGoogleSheet(records, options = {}) {
+    return syncRecordsToGoogleSheet(records, { ...options, actionLabel: options.actionLabel || '최근 Steam 플레이 동기화' });
 }
 
 async function manuallySyncAllRecordsToGoogleSheet() {

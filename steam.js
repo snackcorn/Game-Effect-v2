@@ -1117,6 +1117,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let lastPlayedRemainderCount = 0;
         let mergedRecordCount = 0;
         let separateRecordCount = 0;
+        const changedRecords = new Map();
 
         for (const game of games) {
             if (!shouldSyncSteamGame(game)) {
@@ -1205,6 +1206,7 @@ async function syncRecentSteamPlaytime(options = {}) {
                 if (recordToExtend) {
                     setRecordMinutes(recordToExtend.extendedProps, getRecordMinutes(recordToExtend) + diffMinutes);
                     recordToExtend.extendedProps.steamTotal = currentTotalSteamHours;
+                    changedRecords.set(recordToExtend.id, recordToExtend.extendedProps);
                     mergedRecordCount++;
                 } else {
                     const calendarLinkStart = askSteamChoices
@@ -1216,6 +1218,7 @@ async function syncRecentSteamPlaytime(options = {}) {
                         calendarLinkStart
                     });
                     localEvents.push(newGame);
+                    changedRecords.set(newGame.id, newGame.extendedProps);
                     separateRecordCount++;
                 }
                 updatedCount++;
@@ -1226,7 +1229,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         if (updatedCount > 0) {
             refreshUI();
             saveToLocalStorage();
-            syncAllRecordsSafely();
+            await syncChangedRecordsSafely([...changedRecords.values()], { actionLabel: '최근 Steam 플레이 동기화' });
             const skippedMessages = [];
             if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
             if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);

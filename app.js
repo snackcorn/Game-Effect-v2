@@ -168,6 +168,14 @@ function syncAllRecordsSafely() {
     return syncAllRecordsToGoogleSheet();
 }
 
+function syncChangedRecordsSafely(records, options = {}) {
+    if (typeof syncChangedRecordsToGoogleSheet !== 'function') {
+        console.warn('최신 sheet.js가 아직 배포되지 않아 변경된 구글 시트 기록 저장을 건너뜁니다.');
+        return Promise.resolve();
+    }
+    return syncChangedRecordsToGoogleSheet(records, options);
+}
+
 function saveConnectionSettings() {
     const sheetUrl = document.getElementById('spreadsheetUrlInput')?.value.trim() || '';
     const webAppUrl = document.getElementById('webAppUrlInput')?.value.trim() || '';
