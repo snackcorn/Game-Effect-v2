@@ -113,7 +113,11 @@ function toRow(data) {
 
 function upsertRecords(records) {
   const byYear = {};
-  records.forEach(record => (byYear[getYear(record.startDate)] ||= []).push(record));
+  records.forEach(record => {
+    const year = getYear(record.startDate);
+    if (!byYear[year]) byYear[year] = [];
+    byYear[year].push(record);
+  });
   Object.keys(byYear).forEach(year => {
     const sheet = getYearSheet(year);
     const values = sheet.getDataRange().getValues();
@@ -200,6 +204,10 @@ function jsonp(data, callback) {
 - **Excel로 저장**: 현재 기록을 시작일 연도별 탭으로 나눈 Excel 파일로 내려받습니다.
 
 ## Steam 연결하기
+
+### v2.31 변경 사항
+
+- Google Apps Script에서 지원하지 않는 `||=` 문법을 호환되는 코드로 교체했습니다. 전체 코드를 다시 복사해 붙여 넣으면 저장 오류가 해결됩니다.
 
 ### v2.30 변경 사항
 
