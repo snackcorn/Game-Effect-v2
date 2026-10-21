@@ -70,26 +70,24 @@ function createRecordId() {
     return `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function toPlaytimeMinutes(value, fallbackMinutes = null) {
-    // 시트의 "플레이시간(분)" 열이 비어 있으면 null/빈 문자열을 0분으로
-    // 취급하지 않고, 기존 "시간" 열의 값을 사용합니다.
-    const hasFallbackMinutes = fallbackMinutes !== null && fallbackMinutes !== undefined && String(fallbackMinutes).trim() !== '';
-    if (hasFallbackMinutes && Number.isInteger(Number(fallbackMinutes)) && Number(fallbackMinutes) >= 0) return Number(fallbackMinutes);
+function toPlaytimeMinutes(value) {
+    // v2.42부터 플레이시간 계산은 다시 기존 "시간" 열의 0.1시간 단위를 기준으로 합니다.
+    // 플레이시간(분) 열은 이전 데이터와의 호환을 위해 보관하지만 계산 기준으로 사용하지 않습니다.
     const hours = Number(value);
     return Number.isFinite(hours) && hours >= 0 ? Math.round(hours * 60) : 0;
 }
 
 function setRecordMinutes(record, minutes) {
     const safeMinutes = Math.max(0, Math.round(Number(minutes) || 0));
-    record.playtimeMinutes = safeMinutes;
-    // 기존 시트·내보내기 호환용 표시값입니다. 계산은 playtimeMinutes만 사용합니다.
-    record.time = Number((safeMinutes / 60).toFixed(4));
-    return safeMinutes;
+    record.time = Number((safeMinutes / 60).toFixed(1));
+    // 이전 시트 열과의 호환용 값입니다. 이후 계산은 time을 기준으로 합니다.
+    record.playtimeMinutes = Math.round(record.time * 60);
+    return record.playtimeMinutes;
 }
 
 function getRecordMinutes(recordOrEvent) {
     const record = recordOrEvent?.extendedProps || recordOrEvent || {};
-    return toPlaytimeMinutes(record.time, record.playtimeMinutes);
+    return toPlaytimeMinutes(record.time);
 }
 
 function formatPlaytime(minutes, mode = 'decimal') {
@@ -107,8 +105,8 @@ function migrateRecordDataModel(events = localEvents) {
     events.forEach(event => {
         const record = event.extendedProps || event;
         if (!record.recordId) { record.recordId = event.id || createRecordId(); changed = true; }
-        const minutes = toPlaytimeMinutes(record.time, record.playtimeMinutes);
-        if (record.playtimeMinutes !== minutes || Number(record.time) !== Number((minutes / 60).toFixed(4))) {
+        const minutes = toPlaytimeMinutes(record.time);
+        if (record.playtimeMinutes !== minutes || Number(record.time) !== Number((minutes / 60).toFixed(1))) {
             setRecordMinutes(record, minutes);
             changed = true;
         }

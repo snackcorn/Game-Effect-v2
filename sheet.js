@@ -317,6 +317,9 @@ function applyIncomingSheetRecords(records, sourceLabel, options = {}) {
 
     localEvents = records;
     uniqueTitles = [];
+    // 시트/CSV 복원은 로컬 데이터의 기준점을 바꾸는 작업입니다. 이전 Steam 동기화 시각을
+    // 유지하면 과거 게임을 새 게임으로 오인할 수 있으므로 다음 최근 동기화에서 새 기준을 잡습니다.
+    if (typeof resetSteamRecentSyncBaseline === 'function') resetSteamRecentSyncBaseline();
     refreshUI();
     saveToLocalStorage();
     return true;
