@@ -1023,9 +1023,10 @@ function openDetailModalById(id, options = {}) {
     reviewBox.contentEditable = "true";
     reviewBox.onblur = function() {
         let updatedReviewText = this.innerText.trim();
-        getSameGameEvents(gameObj).forEach(evt => { evt.extendedProps.review = updatedReviewText; });
+        const changedReviewRecords = getSameGameEvents(gameObj);
+        changedReviewRecords.forEach(evt => { evt.extendedProps.review = updatedReviewText; });
         saveToLocalStorage();
-        syncAllRecordsSafely();
+        syncChangedRecordsSafely(changedReviewRecords, { actionLabel: '게임 한줄평 수정' });
     };
 
     rebuildTimelineUI(sameGames);
@@ -1110,7 +1111,7 @@ function submitInstantMemo() {
     }
     refreshUI();
     saveToLocalStorage();
-    syncAllRecordsSafely();
+    if (activeRecord) syncChangedRecordsSafely([activeRecord], { actionLabel: '게임 메모 수정' });
     let selectedRecord = localEvents.find(event => event.id === currentSelectedEventId);
     rebuildTimelineUI(selectedRecord ? getSameGameEvents(selectedRecord) : []);
 }
@@ -1190,7 +1191,7 @@ function saveEditedData() {
     target.backgroundColor = determineEventColor(target.extendedProps);
     
     saveToLocalStorage();
-    syncAllRecordsSafely();
+    syncChangedRecordsSafely([target], { actionLabel: '게임 기록 수정' });
     alert("저장되었습니다."); 
     closeGameModal();
 }

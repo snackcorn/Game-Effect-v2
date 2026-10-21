@@ -661,7 +661,9 @@ async function manuallySyncAllRecordsToGoogleSheet() {
     }
 }
 
-function sendDataToGoogleSheet() {
-    return syncAllRecordsToGoogleSheet();
+function sendDataToGoogleSheet(record) {
+    return record
+        ? syncChangedRecordsToGoogleSheet([record], { actionLabel: '게임 기록 추가' })
+        : syncAllRecordsToGoogleSheet();
 }
 
