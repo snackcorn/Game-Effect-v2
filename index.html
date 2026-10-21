@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.38</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.40</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -102,6 +102,11 @@ function doPost(e) {
       return output({ result: 'success', count: records.length });
     }
 
+    if (data.action === 'deleteRecords') {
+      const recordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
+      return output({ result: 'success', count: deleteRecordsById(recordIds) });
+    }
+
     const sheet = getYearSheet(getYear(data.startDate));
     sheet.appendRow(toRow(data));
     return output({ result: 'success' });
@@ -152,6 +157,27 @@ function upsertRecords(records) {
       else sheet.appendRow(row);
     });
   });
+}
+
+function deleteRecordsById(recordIds) {
+  const ids = new Set(recordIds.map(String).filter(Boolean));
+  if (ids.size === 0) return 0;
+  let deleted = 0;
+  SpreadsheetApp.getActiveSpreadsheet().getSheets()
+    .filter(sheet => /^\d{4}$/.test(sheet.getName()))
+    .forEach(sheet => {
+      const values = sheet.getDataRange().getValues();
+      if (values.length < 2) return;
+      const recordIdColumn = values[0].map(String).indexOf('기록 ID');
+      if (recordIdColumn < 0) return;
+      const rows = values.slice(1)
+        .map((row, index) => ids.has(String(row[recordIdColumn] || '')) ? index + 2 : 0)
+        .filter(Boolean)
+        .sort((a, b) => b - a);
+      rows.forEach(row => sheet.deleteRow(row));
+      deleted += rows.length;
+    });
+  return deleted;
 }
 
 function legacyKeyFromRow(row) {
@@ -206,7 +232,7 @@ function output(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }</code></pre>
             </details>
-            <p class="guide-note">v2.38 코드는 <strong>기록 ID</strong>를 추가해 같은 행만 병합 저장하며, 시트에만 있는 기록은 삭제하지 않습니다. 처음 저장 전에는 시트 변경 경고가 표시됩니다.</p>
+            <p class="guide-note">v2.40 코드는 <strong>기록 ID</strong>를 추가해 같은 행만 병합 저장하며, 시트에만 있는 기록은 삭제하지 않습니다. 처음 저장 전에는 시트 변경 경고가 표시됩니다.</p>
             <p class="guide-note"><strong>보안 설정:</strong> Apps Script 왼쪽의 <strong>프로젝트 설정 → 스크립트 속성</strong>에서 이름을 <code>GAME_EFFECT_SYNC_TOKEN</code>으로 만들고, 12자 이상 임의의 긴 값을 넣으세요. 같은 값을 위의 <strong>시트 동기화 키</strong>에 입력해야 저장·불러오기가 됩니다. 이 키는 GitHub·시트 셀·스크린샷에 올리지 마세요.</p>
         </section>
         <div class="integration-section-divider" role="separator"></div>
@@ -226,6 +252,8 @@ function output(data) {
                 <button type="button" id="normalizeSteamTitlesButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="normalizeExistingSteamTitles()">✏️ Steam 상점 이름으로 제목 정리</button>
                 <button type="button" class="sync-trigger-btn" style="background-color: #0369a1;" onclick="repairSteamSyncDates()">🗓 Steam 날짜 재정렬</button>
                 <button type="button" class="sync-trigger-btn" style="background-color: #b45309;" onclick="rollbackSteamFirstSyncRecords()">↩ Steam 최초 동기화 되돌리기</button>
+                <!-- TEMPORARY: v2.41에서 제거 예정. 2026-10-21의 반올림 오차 복구용입니다. -->
+                <button type="button" id="removeLegacySteamRoundingRowsButton" class="sync-trigger-btn" style="background-color: #be123c;" onclick="removeLegacySteamRoundingRows()">🩹 1~3분 오류 기록 정리</button>
             </div>
             <dl class="record-tools-help">
                 <div><dt>🧹 기록 정리</dt><dd>날짜·시간이 잘못된 행과 완전히 같은 중복 행을 제거한 뒤 날짜순으로 정렬하고 시트에도 저장합니다.</dd></div>
@@ -233,6 +261,7 @@ function output(data) {
                 <div><dt>✏️ Steam 상점 이름으로 제목 정리</dt><dd>AppID가 확인된 게임의 제목을 Steam 한국어 상점명으로 바꿀 후보를 보여 주며, 선택한 항목만 적용합니다.</dd></div>
                 <div><dt>🗓 Steam 날짜 재정렬</dt><dd>선택한 날짜의 AppID 연결 Steam 기록을 마지막 실행일로 옮깁니다. 마지막 실행일이 없으면 그대로 둡니다.</dd></div>
                 <div><dt>↩ Steam 최초 동기화 되돌리기</dt><dd>최초 Steam 동기화로 한꺼번에 추가된 기록만 삭제합니다. 삭제 전 대상 개수를 반드시 확인하세요.</dd></div>
+                <div><dt>🩹 1~3분 오류 기록 정리 <small>(임시 · 다음 업데이트에서 제거)</small></dt><dd>오늘 추가된 Steam 동기화 세션 중 1~3분 기록만 확인 후 로컬과 시트에서 함께 삭제합니다.</dd></div>
             </dl>
         </section>
         <section class="connection-action-section">

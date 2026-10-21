@@ -4,6 +4,9 @@
 
 const MIN_STEAM_SYNC_PLAYTIME_MINUTES = 18;
 const MAX_AUTOMATIC_STEAM_DELTA_MINUTES = 24 * 60;
+// v2.35 이전에는 Steam 누적시간을 0.1시간 단위로 저장했습니다. 분 단위 모델로
+// 전환한 뒤 그 반올림 오차(최대 3분)를 실제 플레이로 오인하지 않기 위한 보정값입니다.
+const LEGACY_STEAM_TOTAL_ROUNDING_TOLERANCE_MINUTES = 3;
 const STEAM_STORE_LOOKUP_CONCURRENCY = 5;
 const STEAM_LAUNCHER_REGISTRY_STORAGE_KEY = 'steam_launcher_registry';
 const STEAM_LAUNCHER_TITLE_MAP_STORAGE_KEY = 'steam_launcher_title_mappings';
@@ -52,6 +55,26 @@ function getSteamLastPlayedDateOrEmpty(lastPlayedTimestamp) {
     return Number.isFinite(timestamp) && timestamp > 0
         ? formatLocalDate(new Date(timestamp * 1000))
         : '';
+}
+
+function getLatestSteamTotalRecord(records) {
+    return records
+        .filter(record => record.extendedProps.steamTotal !== null
+            && record.extendedProps.steamTotal !== ''
+            && Number.isFinite(Number(record.extendedProps.steamTotal)))
+        .sort((first, second) => {
+            const firstDate = first.extendedProps.startDate || '';
+            const secondDate = second.extendedProps.startDate || '';
+            return firstDate.localeCompare(secondDate) || first.id.localeCompare(second.id);
+        })
+        .at(-1) || null;
+}
+
+function hasLegacyRoundedSteamTotal(record) {
+    if (!record) return false;
+    const total = Number(record.extendedProps.steamTotal);
+    // 숫자 값이 0.1시간 단위에 정확히 맞으면, 이전 버전의 반올림 값으로 취급합니다.
+    return Number.isFinite(total) && Math.abs(total * 10 - Math.round(total * 10)) < 0.000001;
 }
 
 // 1. SteamID64만 브라우저에 보관합니다. API 키는 Vercel 환경 변수에만 저장됩니다.
@@ -634,6 +657,75 @@ function rollbackSteamFirstSyncRecords() {
     alert(`${targetDate}의 Steam 동기화 기록 ${targets.length}개를 되돌렸습니다.`);
 }
 
+// TEMPORARY: v2.41에서 제거 예정. v2.39 이전의 0.1시간 반올림 오차로 생긴
+// 오늘의 1~3분 Steam 동기화 세션만 복구합니다.
+async function removeLegacySteamRoundingRows() {
+    const today = formatLocalDate(new Date());
+    const candidates = localEvents.filter(event => {
+        const game = event.extendedProps || {};
+        const minutes = getRecordMinutes(game);
+        return String(game.platform || '').toLocaleLowerCase() === 'steam'
+            && String(game.memo || '').trim() === '스팀 동기화 세션'
+            && String(game.startDate || '') === today
+            && String(game.rawEndDate || game.endDate || game.startDate || '') === today
+            && minutes >= 1
+            && minutes <= 3
+            && Boolean(game.recordId || event.id);
+    });
+
+    if (candidates.length === 0) {
+        alert(`오늘(${today}) 정리할 1~3분 Steam 동기화 오류 기록이 없습니다.`);
+        return;
+    }
+
+    const targetUrl = getSavedWebAppUrl();
+    if (!targetUrl) {
+        alert('이 복구는 로컬과 스프레드시트에서 함께 삭제해야 합니다. 먼저 구글 시트 저장 주소와 동기화 키를 저장해 주세요.');
+        return;
+    }
+
+    const examples = candidates.slice(0, 8)
+        .map(event => `${event.title} (${formatPlaytime(getRecordMinutes(event), 'hm')})`)
+        .join(', ');
+    const more = candidates.length > 8 ? ` 외 ${candidates.length - 8}개` : '';
+    const confirmed = confirm(
+        `⚠️ 구글 스프레드시트 삭제 경고\n\n` +
+        `오늘(${today}) 생성된 “스팀 동기화 세션” 중 1~3분 기록 ${candidates.length}개를 로컬과 시트에서 함께 삭제합니다.\n` +
+        `대상 예시: ${examples}${more}\n\n` +
+        `실제 짧은 플레이도 포함될 수 있습니다. 계속할까요?`
+    );
+    if (!confirmed) return;
+
+    const button = document.getElementById('removeLegacySteamRoundingRowsButton');
+    if (button) {
+        button.disabled = true;
+        button.innerText = '⏳ 오류 기록 삭제 중...';
+    }
+
+    try {
+        const recordIds = [...new Set(candidates.map(event => String(event.extendedProps.recordId || event.id)).filter(Boolean))];
+        const result = await postWebAppData(targetUrl, { action: 'deleteRecords', recordIds });
+        if (result?.result !== 'success' || Number(result.count) !== recordIds.length) {
+            throw new Error(result?.message || '시트에서 삭제한 행 수를 확인하지 못했습니다. Apps Script 코드를 v2.40 안내 코드로 바꾸고 새 버전으로 배포해 주세요.');
+        }
+
+        const ids = new Set(recordIds);
+        recordEditHistory('1~3분 Steam 동기화 오류 기록 정리', `${today} · ${recordIds.length}개 기록`, localEvents);
+        localEvents = localEvents.filter(event => !ids.has(String(event.extendedProps.recordId || event.id)));
+        uniqueTitles = [];
+        saveToLocalStorage();
+        refreshUI();
+        alert(`완료: 1~3분 Steam 동기화 오류 기록 ${recordIds.length}개를 로컬과 시트에서 함께 삭제했습니다.`);
+    } catch (error) {
+        alert(`오류 기록 정리 실패: ${error.message}\n\n로컬 기록은 삭제하지 않았습니다.`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerText = '🩹 1~3분 오류 기록 정리';
+        }
+    }
+}
+
 // 기존 Steam 기록의 표시 제목을 Steam 상점의 한국어 이름으로 맞춥니다.
 // AppID가 이미 연결된 경우를 우선하고, 없는 경우에는 자동 연결과 같은 보수적인 이름 비교만 사용합니다.
 async function normalizeExistingSteamTitles(options = {}) {
@@ -1136,6 +1228,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let lastPlayedRemainderCount = 0;
         let mergedRecordCount = 0;
         let separateRecordCount = 0;
+        let legacySteamTotalCorrectionCount = 0;
         const changedRecords = new Map();
         // "최근 플레이 동기화"는 이미 AppID가 연결된 기록만 갱신합니다.
         // 그렇지 않으면 예전 시트처럼 AppID 열이 비어 있는 경우, Steam 라이브러리 전체를
@@ -1182,20 +1275,24 @@ async function syncRecentSteamPlaytime(options = {}) {
                 skippedUnknownLastPlayedCount++;
                 continue;
             }
-            const recordsWithSteamTotal = existingRecords
-                .filter(record => record.extendedProps.steamTotal !== null && record.extendedProps.steamTotal !== '' && Number.isFinite(Number(record.extendedProps.steamTotal)))
-                .sort((first, second) => {
-                    const firstDate = first.extendedProps.startDate || '';
-                    const secondDate = second.extendedProps.startDate || '';
-                    return firstDate.localeCompare(secondDate) || first.id.localeCompare(second.id);
-                });
-            const lastRecordedSteamTotal = recordsWithSteamTotal.length
-                ? Number(recordsWithSteamTotal[recordsWithSteamTotal.length - 1].extendedProps.steamTotal)
+            const latestSteamTotalRecord = getLatestSteamTotalRecord(existingRecords);
+            const lastRecordedSteamTotal = latestSteamTotalRecord
+                ? Number(latestSteamTotalRecord.extendedProps.steamTotal)
                 : null;
             const recordedTotalMinutes = lastRecordedSteamTotal !== null
                 ? Math.round(lastRecordedSteamTotal * 60)
                 : existingRecords.reduce((sum, record) => sum + getRecordMinutes(record), 0);
             const diffMinutes = currentTotalSteamMinutes - recordedTotalMinutes;
+            // 시간 모델 전환 전의 0.1시간 반올림값과 Steam의 분 단위 값의 차이는
+            // 플레이 기록이 아니라 기준값 정밀도 차이입니다. 새 행을 만들지 않고 기준만 맞춥니다.
+            if (diffMinutes > 0
+                && diffMinutes <= LEGACY_STEAM_TOTAL_ROUNDING_TOLERANCE_MINUTES
+                && hasLegacyRoundedSteamTotal(latestSteamTotalRecord)) {
+                latestSteamTotalRecord.extendedProps.steamTotal = currentTotalSteamHours;
+                changedRecords.set(latestSteamTotalRecord.id, latestSteamTotalRecord.extendedProps);
+                legacySteamTotalCorrectionCount++;
+                continue;
+            }
             if (diffMinutes <= 0) continue;
             const isLargeDelta = diffMinutes > MAX_AUTOMATIC_STEAM_DELTA_MINUTES;
             if (isLargeDelta && !confirmLargeSteamDelta(game, diffMinutes)) continue;
@@ -1261,7 +1358,7 @@ async function syncRecentSteamPlaytime(options = {}) {
             }
         }
 
-        if (updatedCount > 0) {
+        if (updatedCount > 0 || changedRecords.size > 0) {
             refreshUI();
             saveToLocalStorage();
             const sheetSyncResult = await syncChangedRecordsSafely([...changedRecords.values()], { actionLabel: '최근 Steam 플레이 동기화' });
@@ -1282,10 +1379,13 @@ async function syncRecentSteamPlaytime(options = {}) {
             if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);
             if (skippedUnlinkedRecordCount > 0) skippedMessages.push(`Steam AppID가 연결되지 않은 게임 ${skippedUnlinkedRecordCount}개 제외`);
             const skippedMessage = skippedMessages.length ? `\n(${skippedMessages.join(' / ')})` : '';
-            const syncMessage = `🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!`;
+            const syncMessage = updatedCount > 0
+                ? `🎉 총 ${updatedCount}개 스팀 게임의 플레이 기록이 동기화되었습니다!`
+                : '새 플레이 기록은 없습니다.';
             const mergedMessage = mergedRecordCount > 0 ? `\n기존 기록에 이어 붙임: ${mergedRecordCount}개` : '';
             const separateMessage = separateRecordCount > 0 ? `\n새 기록으로 따로 저장: ${separateRecordCount}개` : '';
-            if (!silent) alert(`${syncMessage}${mergedMessage}${separateMessage}${skippedMessage}`);
+            const correctionMessage = legacySteamTotalCorrectionCount > 0 ? `\n이전 누적시간 반올림값 보정: ${legacySteamTotalCorrectionCount}개 (새 기록 추가 없음)` : '';
+            if (!silent) alert(`${syncMessage}${mergedMessage}${separateMessage}${correctionMessage}${skippedMessage}`);
         } else {
             const skippedMessages = [];
             if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
@@ -1298,7 +1398,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         if (!silent && isFirstRecentSyncAfterUpdate) {
             alert('새 Steam 게임 자동 등록 기준 시각을 지금으로 설정했습니다. 다음 최근 플레이 동기화부터는 이 시각 이후에 처음 플레이한 새 게임을 자동으로 등록합니다.');
         }
-        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, lastPlayedRemainderCount, mergedRecordCount, separateRecordCount };
+        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, lastPlayedRemainderCount, mergedRecordCount, separateRecordCount, legacySteamTotalCorrectionCount };
     } catch (error) {
         if (silent) throw error;
         alert(`스팀 연동 실패: ${error.message}`);

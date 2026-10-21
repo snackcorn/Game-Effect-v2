@@ -83,6 +83,10 @@ function doPost(e) {
       upsertRecords(records);
       return json({ result: 'success', count: records.length });
     }
+    if (data.action === 'deleteRecords') {
+      const recordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
+      return json({ result: 'success', count: deleteRecordsById(recordIds) });
+    }
     const sheet = getYearSheet(getYear(data.startDate));
     sheet.appendRow(toRow(data));
 
@@ -134,6 +138,26 @@ function upsertRecords(records) {
       else sheet.appendRow(row);
     });
   });
+}
+function deleteRecordsById(recordIds) {
+  const ids = new Set(recordIds.map(String).filter(Boolean));
+  if (ids.size === 0) return 0;
+  let deleted = 0;
+  SpreadsheetApp.getActiveSpreadsheet().getSheets()
+    .filter(sheet => /^\d{4}$/.test(sheet.getName()))
+    .forEach(sheet => {
+      const values = sheet.getDataRange().getValues();
+      if (values.length < 2) return;
+      const recordIdColumn = values[0].map(String).indexOf('기록 ID');
+      if (recordIdColumn < 0) return;
+      const rows = values.slice(1)
+        .map((row, index) => ids.has(String(row[recordIdColumn] || '')) ? index + 2 : 0)
+        .filter(Boolean)
+        .sort((a, b) => b - a);
+      rows.forEach(row => sheet.deleteRow(row));
+      deleted += rows.length;
+    });
+  return deleted;
 }
 function legacyKeyFromRow(row) { return [row[0], row[1], row[2], row[3], row[4], row[8], row[9]].map(value => String(value ?? '')).join('\u001F'); }
 function legacyKeyFromRecord(record) { return [record.title, record.startDate, record.endDate, record.platform, Number(record.time || 0), record.steamAppId, record.steamTotal ?? ''].map(value => String(value ?? '')).join('\u001F'); }
@@ -204,6 +228,15 @@ function jsonp(data, callback) {
 - **Excel로 저장**: 현재 기록을 시작일 연도별 탭으로 나눈 Excel 파일로 내려받습니다.
 
 ## Steam 연결하기
+
+### v2.40 변경 사항
+
+- 임시 복구 도구 **1~3분 오류 기록 정리**를 추가했습니다. 오늘 생성된 `스팀 동기화 세션` 중 1~3분 기록만 대상으로 보여 주고, 확인 후 로컬과 시트에서 함께 삭제합니다. 다음 업데이트에서 제거 예정입니다.
+- 이 복구 도구는 시트 행을 삭제하므로 Apps Script 코드를 새로 배포해야 합니다.
+
+### v2.39 변경 사항
+
+- 예전 버전의 Steam 누적시간(0.1시간 단위)과 현재 분 단위 시간 계산의 반올림 차이(1~3분)를 실제 플레이로 오인해 새 행을 만들던 문제를 수정했습니다. 기존 누적시간 값만 정밀 보정하며, 새 플레이 기록은 추가하지 않습니다.
 
 ### v2.38 변경 사항
 
