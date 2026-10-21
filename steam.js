@@ -1082,6 +1082,9 @@ function cancelRecentSteamRecordHandling() {
 // 3. 원클릭 스팀 최근 플레이 동기화 (Vercel API 연동)
 async function syncRecentSteamPlaytime(options = {}) {
     const silent = Boolean(options.silent);
+    // 시트 변경 경고에서 취소했을 때, 이번 동기화가 로컬 기록에만 남지 않도록
+    // 동기화 직전 상태를 보관합니다.
+    const localEventsBeforeSync = JSON.stringify(localEvents);
     const creds = getSteamCredentials();
     if (!creds.steamId) {
         const error = new Error('먼저 SteamID64를 입력하고 저장해 주세요!');
@@ -1229,7 +1232,15 @@ async function syncRecentSteamPlaytime(options = {}) {
         if (updatedCount > 0) {
             refreshUI();
             saveToLocalStorage();
-            await syncChangedRecordsSafely([...changedRecords.values()], { actionLabel: '최근 Steam 플레이 동기화' });
+            const sheetSyncResult = await syncChangedRecordsSafely([...changedRecords.values()], { actionLabel: '최근 Steam 플레이 동기화' });
+            if (sheetSyncResult?.cancelled) {
+                localEvents = JSON.parse(localEventsBeforeSync);
+                uniqueTitles = [];
+                saveToLocalStorage();
+                refreshUI();
+                if (!silent) alert('시트 저장을 취소해 이번 Steam 동기화에서 추가·변경된 로컬 기록도 되돌렸습니다.');
+                return { cancelled: true, updatedCount: 0 };
+            }
             const skippedMessages = [];
             if (skippedShortPlaytimeCount > 0) skippedMessages.push(`총 플레이 0.3시간 미만 게임 ${skippedShortPlaytimeCount}개 제외`);
             if (skippedUnknownLastPlayedCount > 0) skippedMessages.push(`마지막 실행일 정보가 없는 신규 게임 ${skippedUnknownLastPlayedCount}개 제외`);
