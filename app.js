@@ -112,6 +112,11 @@ function migrateRecordDataModel(events = localEvents) {
         }
         if (record.isLauncherParent === undefined) record.isLauncherParent = false;
         if (record.isAllocated === undefined) record.isAllocated = false;
+        // 이전 버전에서 저장한 런처 하위 기록도 제목별로 분리 집계합니다.
+        if (record.isLauncherAllocation === undefined) {
+            record.isLauncherAllocation = Boolean(record.parentAppId);
+            changed = true;
+        }
     });
     return changed;
 }
@@ -214,6 +219,87 @@ function saveConnectionSettings() {
     alert(`${saved.join(', ')}를 이 브라우저에 저장했습니다.`);
 }
 
+const CONNECTION_TRANSFER_PREFIX = 'GAME_EFFECT_CONNECTION_V1:';
+
+function getConnectionTransferData() {
+    const fieldValue = id => document.getElementById(id)?.value.trim() || '';
+    return {
+        version: 1,
+        spreadsheetUrl: fieldValue('spreadsheetUrlInput') || localStorage.getItem('saved_game_sheet_url') || '',
+        webAppUrl: fieldValue('webAppUrlInput') || localStorage.getItem('user_local_web_app_url') || '',
+        steamId: fieldValue('steamIdInput') || localStorage.getItem('user_steam_id') || ''
+    };
+}
+
+function isValidSpreadsheetUrl(value) {
+    if (!value) return true;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && url.hostname === 'docs.google.com' && /^\/spreadsheets\/d\/[^/]+/.test(url.pathname);
+    } catch (_) {
+        return false;
+    }
+}
+
+function isValidWebAppUrl(value) {
+    return !value || /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(value);
+}
+
+async function copyConnectionInfo() {
+    const data = getConnectionTransferData();
+    if (!data.spreadsheetUrl && !data.webAppUrl && !data.steamId) {
+        alert('복사할 연결 정보가 없습니다. 먼저 연결 정보를 입력하거나 저장해 주세요.');
+        return;
+    }
+
+    // 동기화 키는 이 객체에 넣지 않습니다. 클립보드·백업·공유에 노출되지 않게 합니다.
+    const text = `${CONNECTION_TRANSFER_PREFIX}${JSON.stringify(data)}`;
+    try {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
+        await navigator.clipboard.writeText(text);
+        alert('연결 정보를 복사했습니다.\n\n시트 주소·저장 주소·SteamID64만 포함되며, 시트 동기화 키는 복사되지 않습니다.');
+    } catch (_) {
+        window.prompt('자동 복사에 실패했습니다. 아래 내용을 직접 복사해 새 환경에 붙여넣어 주세요.\n(동기화 키는 포함되지 않습니다.)', text);
+    }
+}
+
+function applyConnectionTransferText(text) {
+    if (typeof text !== 'string' || !text.startsWith(CONNECTION_TRANSFER_PREFIX)) {
+        throw new Error('Game Effect에서 복사한 연결 정보가 아닙니다.');
+    }
+    const data = JSON.parse(text.slice(CONNECTION_TRANSFER_PREFIX.length));
+    const spreadsheetUrl = typeof data.spreadsheetUrl === 'string' ? data.spreadsheetUrl.trim() : '';
+    const webAppUrl = typeof data.webAppUrl === 'string' ? data.webAppUrl.trim() : '';
+    const steamId = typeof data.steamId === 'string' ? data.steamId.trim() : '';
+    if (data.version !== 1 || !isValidSpreadsheetUrl(spreadsheetUrl) || !isValidWebAppUrl(webAppUrl) || (steamId && !/^\d{17}$/.test(steamId))) {
+        throw new Error('연결 정보 형식이 올바르지 않습니다.');
+    }
+
+    document.getElementById('spreadsheetUrlInput').value = spreadsheetUrl;
+    document.getElementById('webAppUrlInput').value = webAppUrl;
+    document.getElementById('steamIdInput').value = steamId;
+    // 동기화 키는 의도적으로 비워 둡니다. 새 환경에서 직접 입력해야 합니다.
+    document.getElementById('sheetSyncTokenInput').value = '';
+}
+
+async function pasteConnectionInfo() {
+    let text = '';
+    try {
+        if (!navigator.clipboard?.readText) throw new Error('Clipboard API unavailable');
+        text = await navigator.clipboard.readText();
+    } catch (_) {
+        text = window.prompt('기존 환경에서 “연결 정보 복사”로 만든 내용을 붙여넣어 주세요.\n(동기화 키는 포함되지 않습니다.)', '') || '';
+    }
+    if (!text.trim()) return;
+
+    try {
+        applyConnectionTransferText(text.trim());
+        alert('연결 정보를 입력칸에 채웠습니다.\n\n시트 동기화 키를 직접 입력한 뒤 “연결 정보 저장”을 눌러 주세요.');
+    } catch (error) {
+        alert(`연결 정보를 불러오지 못했습니다. ${error.message}`);
+    }
+}
+
 async function copySpreadsheetGuideCode() {
     const code = document.getElementById('spreadsheetAppsScriptCode')?.textContent?.trim();
     const button = document.getElementById('copySpreadsheetGuideButton');
@@ -260,9 +346,13 @@ function saveSteamTitleLink(title, steamAppId) {
 function getGameIdentity(gameOrEvent) {
     const game = gameOrEvent?.extendedProps || gameOrEvent || {};
     const steamAppId = String(game.steamAppId || '').trim();
+    const title = String(game.title || '').trim().toLocaleLowerCase();
+    // 통합 런처의 하위 게임은 AppID를 공유하므로, 제목까지 포함해 따로 집계합니다.
+    if (steamAppId && (game.isLauncherAllocation || game.parentAppId)) {
+        return `steam-launcher:${steamAppId}\u001F${title}`;
+    }
     if (steamAppId) return `steam:${steamAppId}`;
     // Steam 연결이 없는 기록은 제목뿐 아니라 플랫폼까지 같아야 같은 게임입니다.
-    const title = String(game.title || '').trim().toLocaleLowerCase();
     const platform = String(game.platform || '').trim().toLocaleLowerCase();
     return `manual:${title}\u001F${platform}`;
 }
@@ -740,6 +830,7 @@ function createGameObj(name, start, end, platform, time, endingStatus, memo, rev
         isLauncherParent: Boolean(metadata.isLauncherParent),
         parentAppId: String(metadata.parentAppId || ''),
         isAllocated: Boolean(metadata.isAllocated),
+        isLauncherAllocation: Boolean(metadata.isLauncherAllocation || metadata.parentAppId),
         calendarLinkStart: String(metadata.calendarLinkStart || '')
     };
     setRecordMinutes(gameObj, toPlaytimeMinutes(time, metadata.playtimeMinutes));
