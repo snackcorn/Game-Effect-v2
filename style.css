@@ -438,25 +438,17 @@ h1 {
 .calendar-share-actions label { color: #cbd5e1; font-size: .9em; cursor: pointer; }
 .calendar-share-actions input { accent-color: #818cf8; }
 .calendar-share-actions .sync-trigger-btn { padding: 8px 12px; font-size: .9em; }
-.share-image-capture {
-    position: fixed; z-index: -1; left: -20000px; top: 0; width: 1200px;
-    padding: 28px; background: #1e1e24; color: #f8fafc; box-sizing: border-box;
-}
-.share-image-capture > h1 { margin: 0 0 20px; color: #c7d2fe; font-size: 26px; }
-.share-image-content { display: block; }
-.share-image-content.with-recent-week { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
-.share-image-capture #calendar-container { max-width: none; width: 100%; margin: 0; }
-.share-image-capture .recent-week-sidebar { position: static; margin: 0; max-width: none; box-sizing: border-box; }
-.share-image-capture.light-theme { background: #f4f7fb; color: #1f2937; }
-.share-image-capture.light-theme > h1 { color: #4338ca; }
-.share-image-capture.light-theme #calendar-container,
-.share-image-capture.light-theme .recent-week-sidebar { background: #fff; }
 .fc {
     --fc-border-color: #3f3f50;
     --fc-page-bg-color: #2b2b36;
 }
 .fc .fc-toolbar-title { color: #ffffff; }
 .fc .fc-button-primary { background-color: #4f46e5; border-color: #4f46e5; }
+/* "1일부터 표시"에서 앞·뒤 달의 날짜는 숨기되, 회색 비활성 칸 대신 일반 빈칸처럼 보입니다. */
+#calendar.calendar-current-month-only .fc-day-other,
+#calendar.calendar-current-month-only .fc-day-other .fc-daygrid-day-frame {
+    background: var(--fc-page-bg-color) !important;
+}
 
 .game-bar {
     padding: 3px 6px; border-radius: 4px; font-weight: bold; font-size: 0.85em; color: #ffffff;

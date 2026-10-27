@@ -645,45 +645,162 @@ function switchTab(viewId) {
 }
 
 function downloadCalendarShareImage() {
-    if (!window.html2canvas) {
-        alert('공유 이미지 기능을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.');
-        return;
-    }
-    const calendarContainer = document.getElementById('calendar-container');
     const includeRecentWeek = Boolean(document.getElementById('shareIncludeRecentWeek')?.checked);
     const button = document.querySelector('.calendar-share-actions button');
-    if (!calendarContainer || !button) return;
+    if (!calendar || !button) return;
 
     hideCalendarHoverCard();
     button.disabled = true;
     button.textContent = '🖼 이미지 만드는 중…';
 
-    const capture = document.createElement('section');
-    capture.className = `share-image-capture${document.body.classList.contains('light-theme') ? ' light-theme' : ''}`;
-    const title = document.createElement('h1');
-    title.textContent = `🎮 Game Effect · ${calendar?.view?.title || '플레이 달력'}`;
-    const content = document.createElement('div');
-    content.className = `share-image-content${includeRecentWeek ? ' with-recent-week' : ''}`;
-    const calendarCopy = calendarContainer.cloneNode(true);
-    calendarCopy.querySelector('.calendar-share-actions')?.remove();
-    content.appendChild(calendarCopy);
-
-    if (includeRecentWeek) {
-        const recentWeek = document.querySelector('.recent-week-sidebar')?.cloneNode(true);
-        if (recentWeek) content.appendChild(recentWeek);
-    }
-    capture.append(title, content);
-    document.body.appendChild(capture);
-
     requestAnimationFrame(() => {
-        window.html2canvas(capture, {
-            backgroundColor: document.body.classList.contains('light-theme') ? '#f4f7fb' : '#1e1e24',
-            scale: 2,
-            useCORS: true,
-            logging: false
-        }).then(canvas => new Promise(resolve => canvas.toBlob(resolve, 'image/png')))
-            .then(blob => {
-                if (!blob) throw new Error('이미지를 만들지 못했습니다.');
+        try {
+            const lightTheme = document.body.classList.contains('light-theme');
+            const settings = getBetaSettings();
+            const view = calendar.view;
+            const visibleMonth = calendar.getDate().getMonth();
+            const visibleYear = calendar.getDate().getFullYear();
+            const start = new Date(view.activeStart);
+            const end = new Date(view.activeEnd);
+            const days = [];
+            for (let cursor = new Date(start); cursor < end; cursor.setDate(cursor.getDate() + 1)) {
+                days.push(new Date(cursor));
+            }
+            const weeks = Array.from({ length: Math.ceil(days.length / 7) }, (_, index) => days.slice(index * 7, index * 7 + 7));
+            const isCurrentMonthDay = date => date.getFullYear() === visibleYear && date.getMonth() === visibleMonth;
+            const eventsForDay = date => {
+                if (settings.calendarMonthDisplay === 'current-month' && !isCurrentMonthDay(date)) return [];
+                const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+                return calendar.getEvents()
+                    .filter(event => event.start < dayEnd && (event.end || new Date(event.start.getTime() + 86400000)) > dayStart)
+                    .sort((left, right) => String(left.title).localeCompare(String(right.title), 'ko'));
+            };
+            const weekRows = weeks.map(week => week.map(eventsForDay));
+            const weekHeights = weekRows.map(rows => Math.max(112, 34 + Math.max(0, ...rows.map(events => events.length)) * 24 + 8));
+            const padding = 28;
+            const sidebarWidth = includeRecentWeek ? 300 : 0;
+            const columnGap = includeRecentWeek ? 24 : 0;
+            const imageWidth = includeRecentWeek ? 1500 : 1200;
+            const calendarWidth = imageWidth - padding * 2 - sidebarWidth - columnGap;
+            const headerHeight = 104;
+            const weekdayHeight = 34;
+            const imageHeight = headerHeight + weekdayHeight + weekHeights.reduce((sum, height) => sum + height, 0) + padding;
+            const canvas = document.createElement('canvas');
+            canvas.width = imageWidth;
+            canvas.height = imageHeight;
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('캔버스를 만들지 못했습니다.');
+
+            const background = lightTheme ? '#f4f7fb' : '#1e1e24';
+            const panel = lightTheme ? '#ffffff' : '#2b2b36';
+            const line = lightTheme ? '#cbd5e1' : '#3f3f50';
+            const text = lightTheme ? '#1f2937' : '#f8fafc';
+            const muted = lightTheme ? '#64748b' : '#cbd5e1';
+            const accent = '#818cf8';
+            context.fillStyle = background;
+            context.fillRect(0, 0, imageWidth, imageHeight);
+            context.fillStyle = text;
+            context.font = '700 30px "Noto Sans KR", Arial, sans-serif';
+            context.fillText(`🎮 Game Effect · ${view.title}`, padding, 48);
+            context.fillStyle = muted;
+            context.font = '16px "Noto Sans KR", Arial, sans-serif';
+            context.fillText('플레이 달력', padding, 78);
+
+            const calendarX = padding;
+            const calendarY = headerHeight;
+            const dayWidth = calendarWidth / 7;
+            context.fillStyle = panel;
+            context.fillRect(calendarX, calendarY, calendarWidth, weekdayHeight + weekHeights.reduce((sum, height) => sum + height, 0));
+            context.strokeStyle = line;
+            context.lineWidth = 1;
+            const weekNames = ['일', '월', '화', '수', '목', '금', '토'];
+            context.font = '700 15px "Noto Sans KR", Arial, sans-serif';
+            context.textAlign = 'center';
+            weekNames.forEach((name, index) => {
+                context.fillStyle = muted;
+                context.fillText(name, calendarX + dayWidth * index + dayWidth / 2, calendarY + 22);
+            });
+            context.beginPath();
+            context.moveTo(calendarX, calendarY + weekdayHeight);
+            context.lineTo(calendarX + calendarWidth, calendarY + weekdayHeight);
+            context.stroke();
+
+            let rowY = calendarY + weekdayHeight;
+            weekRows.forEach((rows, weekIndex) => {
+                const rowHeight = weekHeights[weekIndex];
+                rows.forEach((events, dayIndex) => {
+                    const cellX = calendarX + dayWidth * dayIndex;
+                    const date = weeks[weekIndex][dayIndex];
+                    const isCurrent = isCurrentMonthDay(date);
+                    context.strokeStyle = line;
+                    context.strokeRect(cellX, rowY, dayWidth, rowHeight);
+                    if (settings.calendarMonthDisplay === 'current-month' && !isCurrent) return;
+                    context.fillStyle = isCurrent ? text : muted;
+                    context.textAlign = 'right';
+                    context.font = '700 14px "Noto Sans KR", Arial, sans-serif';
+                    context.fillText(String(date.getDate()), cellX + dayWidth - 8, rowY + 19);
+                    events.forEach((event, eventIndex) => {
+                        const game = event.extendedProps || {};
+                        const eventY = rowY + 28 + eventIndex * 24;
+                        context.fillStyle = event.backgroundColor || game.backgroundColor || accent;
+                        context.fillRect(cellX + 4, eventY, dayWidth - 8, 20);
+                        const suffix = game.hasExactDailySteamTime
+                            ? ` (+${Number(game.dailyIncrease || 0).toFixed(1)}h)`
+                            : ` (${Number(game.time || 0).toFixed(1)}h)`;
+                        const label = `${event.title}${suffix}${isGameFinished(game.isEnding) ? ' 🏆' : ''}`;
+                        context.fillStyle = '#ffffff';
+                        context.font = '700 11px "Noto Sans KR", Arial, sans-serif';
+                        context.textAlign = 'left';
+                        let clipped = label;
+                        while (clipped.length && context.measureText(clipped).width > dayWidth - 14) clipped = `${clipped.slice(0, -2)}…`;
+                        context.fillText(clipped, cellX + 8, eventY + 14);
+                    });
+                });
+                rowY += rowHeight;
+            });
+
+            if (includeRecentWeek) {
+                const sidebarX = calendarX + calendarWidth + columnGap;
+                context.fillStyle = panel;
+                context.fillRect(sidebarX, calendarY, sidebarWidth, Math.max(260, imageHeight - calendarY - padding));
+                context.strokeStyle = accent;
+                context.strokeRect(sidebarX, calendarY, sidebarWidth, Math.max(260, imageHeight - calendarY - padding));
+                context.fillStyle = accent;
+                context.font = '700 16px "Noto Sans KR", Arial, sans-serif';
+                context.textAlign = 'left';
+                context.fillText('🎮 최근 7일 플레이 시간 TOP 10', sidebarX + 16, calendarY + 28);
+                const topItems = [...document.querySelectorAll('#recentWeekGames .recent-week-item')];
+                if (topItems.length === 0) {
+                    context.fillStyle = muted;
+                    context.font = '14px "Noto Sans KR", Arial, sans-serif';
+                    context.fillText('최근 7일에 기록한 게임이 없습니다.', sidebarX + 16, calendarY + 58);
+                }
+                topItems.slice(0, 10).forEach((item, index) => {
+                    const name = item.querySelector('.recent-week-game')?.textContent?.trim() || '';
+                    const time = item.querySelector('.recent-week-meta')?.textContent?.trim() || '';
+                    const itemY = calendarY + 46 + index * 30;
+                    context.fillStyle = lightTheme ? '#f8fafc' : '#1e1e24';
+                    context.fillRect(sidebarX + 12, itemY, sidebarWidth - 24, 24);
+                    context.fillStyle = text;
+                    context.font = '700 12px "Noto Sans KR", Arial, sans-serif';
+                    context.textAlign = 'left';
+                    let clippedName = name;
+                    while (clippedName.length && context.measureText(clippedName).width > sidebarWidth - 88) clippedName = `${clippedName.slice(0, -2)}…`;
+                    context.fillText(clippedName, sidebarX + 20, itemY + 16);
+                    context.fillStyle = muted;
+                    context.textAlign = 'right';
+                    context.fillText(time, sidebarX + sidebarWidth - 20, itemY + 16);
+                });
+            }
+
+            canvas.toBlob(blob => {
+                if (!blob) {
+                    alert('공유 이미지를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                    button.disabled = false;
+                    button.textContent = '🖼 공유 이미지 저장';
+                    return;
+                }
                 const link = document.createElement('a');
                 const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
                 link.href = URL.createObjectURL(blob);
@@ -692,16 +809,15 @@ function downloadCalendarShareImage() {
                 link.click();
                 link.remove();
                 URL.revokeObjectURL(link.href);
-            })
-            .catch(error => {
-                console.error('공유 이미지 저장 오류:', error);
-                alert('공유 이미지를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
-            })
-            .finally(() => {
-                capture.remove();
                 button.disabled = false;
                 button.textContent = '🖼 공유 이미지 저장';
-            });
+            }, 'image/png');
+        } catch (error) {
+            console.error('공유 이미지 저장 오류:', error);
+            alert('공유 이미지를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+            button.disabled = false;
+            button.textContent = '🖼 공유 이미지 저장';
+        }
     });
 }
 
@@ -1546,6 +1662,7 @@ function saveSettingsFromModal() {
         const showFullGrid = settings.calendarMonthDisplay === 'full-grid';
         calendar.setOption('fixedWeekCount', showFullGrid);
         calendar.setOption('showNonCurrentDates', showFullGrid);
+        document.getElementById('calendar')?.classList.toggle('calendar-current-month-only', !showFullGrid);
         calendar.updateSize();
     }
     refreshUI();
@@ -1607,6 +1724,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     const calendarSettings = getBetaSettings();
+    calendarEl.classList.toggle('calendar-current-month-only', calendarSettings.calendarMonthDisplay !== 'full-grid');
     calendar = new FullCalendar.Calendar(calendarEl, {
         initialView: 'dayGridMonth', locale: 'ko',
         fixedWeekCount: calendarSettings.calendarMonthDisplay === 'full-grid',
