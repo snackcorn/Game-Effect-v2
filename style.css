@@ -449,6 +449,10 @@ h1 {
 #calendar.calendar-current-month-only .fc-day-other .fc-daygrid-day-frame {
     background: var(--fc-page-bg-color) !important;
 }
+#calendar.calendar-current-month-only {
+    /* FullCalendar가 날짜 없는 앞·뒤 칸에 쓰는 기본 회색 변수까지 같은 배경으로 맞춥니다. */
+    --fc-neutral-bg-color: var(--fc-page-bg-color);
+}
 
 .game-bar {
     padding: 3px 6px; border-radius: 4px; font-weight: bold; font-size: 0.85em; color: #ffffff;
