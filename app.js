@@ -24,10 +24,11 @@ function getBetaSettings() {
         return {
             platforms: Array.isArray(saved.platforms) ? saved.platforms : DEFAULT_PLATFORM_SETTINGS,
             calendarBlockStyle: saved.calendarBlockStyle || 'merged',
+            calendarMonthDisplay: saved.calendarMonthDisplay || 'current-month',
             showSteamTotalOnCalendar: Boolean(saved.showSteamTotalOnCalendar),
             themeMode: saved.themeMode || 'dark'
         };
-    } catch { return { platforms: DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: 'merged', showSteamTotalOnCalendar: false, themeMode: 'dark' }; }
+    } catch { return { platforms: DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: 'merged', calendarMonthDisplay: 'current-month', showSteamTotalOnCalendar: false, themeMode: 'dark' }; }
 }
 function saveBetaSettings(settings) { localStorage.setItem('game_effect_beta_settings', JSON.stringify(settings)); }
 function recordEditHistory(action, title, snapshot = localEvents, details = []) {
@@ -445,21 +446,54 @@ function buildDailyCalendarEvents() {
         });
         const totalPlayTime = getGameTotalPlayTime(games);
 
+        // 최근 Steam 기록을 여러 번 "바로 이어 보기"로 선택하면 각 기록이
+        // 이전 기록부터 다시 그려져 바가 겹쳤습니다. 연결된 구간을 하나의
+        // 연속 바(연결 체인)로 합쳐, 실제 기록은 그대로 두고 표시만 중복 없이 만듭니다.
+        const linkedRanges = games
+            .filter(event => {
+                const game = event.extendedProps;
+                return game.calendarLinkStart && game.calendarLinkStart < game.startDate;
+            })
+            .map(event => {
+                const game = event.extendedProps;
+                return {
+                    start: game.calendarLinkStart,
+                    end: addDays(game.rawEndDate || game.endDate || game.startDate, 1),
+                    event
+                };
+            })
+            .sort((left, right) => left.start.localeCompare(right.start) || left.end.localeCompare(right.end));
+        const linkedChains = [];
+        linkedRanges.forEach(range => {
+            const previous = linkedChains[linkedChains.length - 1];
+            if (previous && range.start <= previous.end) {
+                if (range.end >= previous.end) {
+                    previous.end = range.end;
+                    previous.event = range.event;
+                }
+            } else {
+                linkedChains.push({ ...range });
+            }
+        });
+        linkedChains.forEach(chain => {
+            const game = chain.event.extendedProps;
+            calendarEvents.push({
+                ...chain.event,
+                id: `${chain.event.id}_linked_chain_${chain.start}`,
+                start: chain.start,
+                end: chain.end,
+                extendedProps: { ...game, originalEventId: chain.event.id, totalPlayTime, isCalendarLinkedDisplay: true }
+            });
+        });
+
         games.forEach(event => {
             const game = event.extendedProps;
             const dates = getDatesInRange(game.startDate, game.rawEndDate || game.endDate || game.startDate);
             if (dates.length === 0) return;
-            // 데이터는 하루 기록 그대로 두고, 사용자가 선택했을 때만 달력에서 이전 기록부터 바처럼 보입니다.
-            if (game.calendarLinkStart && game.calendarLinkStart < game.startDate) {
-                calendarEvents.push({
-                    ...event,
-                    id: `${event.id}_linked`,
-                    start: game.calendarLinkStart,
-                    end: addDays(game.rawEndDate || game.endDate || game.startDate, 1),
-                    extendedProps: { ...game, originalEventId: event.id, totalPlayTime, isCalendarLinkedDisplay: true }
-                });
-                return;
-            }
+            const isPartOfLinkedChain = linkedChains.some(chain =>
+                game.startDate >= chain.start && game.startDate < chain.end
+            );
+            if (isPartOfLinkedChain) return;
             const hasExactDailySteamTime = game.steamTotal !== null && game.steamTotal !== '' && Number.isFinite(Number(game.steamTotal)) && dates.length === 1;
             if (hasExactDailySteamTime) {
                 calendarEvents.push({
@@ -557,32 +591,10 @@ function showCalendarHoverCard(info) {
 }
 
 function scheduleShortPlaytimeCollapse() {
-    if (shortPlaytimeCollapseScheduled) return;
-    shortPlaytimeCollapseScheduled = true;
-    requestAnimationFrame(() => {
-        shortPlaytimeCollapseScheduled = false;
-        document.querySelectorAll('.fc-daygrid-day').forEach(day => {
-            day.querySelector('.short-playtime-toggle')?.remove();
-            day.querySelectorAll('.fc-daygrid-event-harness').forEach(harness => harness.classList.remove('is-short-playtime-hidden'));
-
-            const shortHarnesses = [...day.querySelectorAll('.fc-daygrid-event-harness[data-short-playtime="true"]')];
-            if (shortHarnesses.length < 3) return;
-
-            let expanded = false;
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'short-playtime-toggle';
-            const update = () => {
-                shortHarnesses.forEach(harness => harness.classList.toggle('is-short-playtime-hidden', !expanded));
-                button.innerText = expanded
-                    ? `▴ 1시간 이하 기록 ${shortHarnesses.length}개 접기`
-                    : `▾ 1시간 이하 기록 ${shortHarnesses.length}개 보기`;
-            };
-            button.addEventListener('click', () => { expanded = !expanded; update(); });
-            day.querySelector('.fc-daygrid-day-events')?.appendChild(button);
-            update();
-        });
-    });
+    // 기록이 많아도 일부를 접거나 내부 스크롤을 만들지 않습니다.
+    // 달력 행 높이가 기록 수만큼 늘어나도록 모든 항목을 그대로 표시합니다.
+    document.querySelectorAll('.short-playtime-toggle').forEach(button => button.remove());
+    document.querySelectorAll('.fc-daygrid-event-harness').forEach(harness => harness.classList.remove('is-short-playtime-hidden'));
 }
 
 function SmartDateFormatter(inputStr) {
@@ -630,6 +642,67 @@ function switchTab(viewId) {
         calendar.updateSize();
     }
     if ((viewId === 'report-view' || viewId === 'list-view') && localEvents.length > 0) { refreshUI(); }
+}
+
+function downloadCalendarShareImage() {
+    if (!window.html2canvas) {
+        alert('공유 이미지 기능을 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.');
+        return;
+    }
+    const calendarContainer = document.getElementById('calendar-container');
+    const includeRecentWeek = Boolean(document.getElementById('shareIncludeRecentWeek')?.checked);
+    const button = document.querySelector('.calendar-share-actions button');
+    if (!calendarContainer || !button) return;
+
+    hideCalendarHoverCard();
+    button.disabled = true;
+    button.textContent = '🖼 이미지 만드는 중…';
+
+    const capture = document.createElement('section');
+    capture.className = `share-image-capture${document.body.classList.contains('light-theme') ? ' light-theme' : ''}`;
+    const title = document.createElement('h1');
+    title.textContent = `🎮 Game Effect · ${calendar?.view?.title || '플레이 달력'}`;
+    const content = document.createElement('div');
+    content.className = `share-image-content${includeRecentWeek ? ' with-recent-week' : ''}`;
+    const calendarCopy = calendarContainer.cloneNode(true);
+    calendarCopy.querySelector('.calendar-share-actions')?.remove();
+    content.appendChild(calendarCopy);
+
+    if (includeRecentWeek) {
+        const recentWeek = document.querySelector('.recent-week-sidebar')?.cloneNode(true);
+        if (recentWeek) content.appendChild(recentWeek);
+    }
+    capture.append(title, content);
+    document.body.appendChild(capture);
+
+    requestAnimationFrame(() => {
+        window.html2canvas(capture, {
+            backgroundColor: document.body.classList.contains('light-theme') ? '#f4f7fb' : '#1e1e24',
+            scale: 2,
+            useCORS: true,
+            logging: false
+        }).then(canvas => new Promise(resolve => canvas.toBlob(resolve, 'image/png')))
+            .then(blob => {
+                if (!blob) throw new Error('이미지를 만들지 못했습니다.');
+                const link = document.createElement('a');
+                const date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
+                link.href = URL.createObjectURL(blob);
+                link.download = `game-effect-calendar-${date}.png`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(link.href);
+            })
+            .catch(error => {
+                console.error('공유 이미지 저장 오류:', error);
+                alert('공유 이미지를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+            })
+            .finally(() => {
+                capture.remove();
+                button.disabled = false;
+                button.textContent = '🖼 공유 이미지 저장';
+            });
+    });
 }
 
 function searchGameTitles(keyword) {
@@ -1313,6 +1386,7 @@ function closeUsageGuide() {
 function renderBetaSettings() {
     const settings = getBetaSettings();
     document.getElementById('calendarBlockStyle').value = settings.calendarBlockStyle;
+    document.getElementById('calendarMonthDisplay').value = settings.calendarMonthDisplay;
     document.getElementById('showSteamTotalOnCalendar').value = String(settings.showSteamTotalOnCalendar);
     document.getElementById('themeMode').value = settings.themeMode;
     document.getElementById('platformSettingsList').innerHTML = settings.platforms.map((item, index) => `<div class="platform-setting-row"><span>${escapeHtml(item.name)}</span><input type="color" value="${escapeHtml(item.color)}" data-platform-index="${index}"><button type="button" data-remove-platform="${index}">제거</button></div>`).join('');
@@ -1461,12 +1535,20 @@ function closeSettings() { setModalVisibility(document.getElementById('settingsM
 function saveSettingsFromModal() {
     const settings = getBetaSettings();
     settings.calendarBlockStyle = document.getElementById('calendarBlockStyle').value;
+    settings.calendarMonthDisplay = document.getElementById('calendarMonthDisplay').value;
     settings.showSteamTotalOnCalendar = document.getElementById('showSteamTotalOnCalendar').value === 'true';
     settings.themeMode = document.getElementById('themeMode').value;
     document.querySelectorAll('[data-platform-index]').forEach(input => { settings.platforms[Number(input.dataset.platformIndex)].color = input.value; });
     saveBetaSettings(settings);
     localEvents.forEach(event => { event.backgroundColor = determineEventColor(event.extendedProps); });
-    saveToLocalStorage(); applyBetaTheme(); renderPlatformOptions('gamePlatform'); refreshUI();
+    saveToLocalStorage(); applyBetaTheme(); renderPlatformOptions('gamePlatform');
+    if (calendar) {
+        const showFullGrid = settings.calendarMonthDisplay === 'full-grid';
+        calendar.setOption('fixedWeekCount', showFullGrid);
+        calendar.setOption('showNonCurrentDates', showFullGrid);
+        calendar.updateSize();
+    }
+    refreshUI();
 }
 
 function resetPlatformColorsToDefaults() {
@@ -1524,8 +1606,11 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('steamIdInput').value = savedSteamId;
     }
 
+    const calendarSettings = getBetaSettings();
     calendar = new FullCalendar.Calendar(calendarEl, {
         initialView: 'dayGridMonth', locale: 'ko',
+        fixedWeekCount: calendarSettings.calendarMonthDisplay === 'full-grid',
+        showNonCurrentDates: calendarSettings.calendarMonthDisplay === 'full-grid',
         events: function(fetchInfo, successCallback, failureCallback) { successCallback(buildDailyCalendarEvents()); },
         eventContent: function(arg) {
             let isEnd = arg.event.extendedProps.isEnding && arg.event.extendedProps.isEnding !== 'x';
