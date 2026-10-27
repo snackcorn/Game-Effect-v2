@@ -668,16 +668,41 @@ function downloadCalendarShareImage() {
             }
             const weeks = Array.from({ length: Math.ceil(days.length / 7) }, (_, index) => days.slice(index * 7, index * 7 + 7));
             const isCurrentMonthDay = date => date.getFullYear() === visibleYear && date.getMonth() === visibleMonth;
-            const eventsForDay = date => {
-                if (settings.calendarMonthDisplay === 'current-month' && !isCurrentMonthDay(date)) return [];
-                const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-                const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
-                return calendar.getEvents()
-                    .filter(event => event.start < dayEnd && (event.end || new Date(event.start.getTime() + 86400000)) > dayStart)
-                    .sort((left, right) => String(left.title).localeCompare(String(right.title), 'ko'));
-            };
-            const weekRows = weeks.map(week => week.map(eventsForDay));
-            const weekHeights = weekRows.map(rows => Math.max(112, 34 + Math.max(0, ...rows.map(events => events.length)) * 24 + 8));
+            const firstCurrentMonthDay = new Date(visibleYear, visibleMonth, 1);
+            const firstNextMonthDay = new Date(visibleYear, visibleMonth + 1, 1);
+            const eventEnd = event => event.end || new Date(event.start.getFullYear(), event.start.getMonth(), event.start.getDate() + 1);
+            const weekLayouts = weeks.map(week => {
+                const weekStart = new Date(week[0].getFullYear(), week[0].getMonth(), week[0].getDate());
+                const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7);
+                const visibleStart = settings.calendarMonthDisplay === 'current-month'
+                    ? new Date(Math.max(weekStart.getTime(), firstCurrentMonthDay.getTime()))
+                    : weekStart;
+                const visibleEnd = settings.calendarMonthDisplay === 'current-month'
+                    ? new Date(Math.min(weekEnd.getTime(), firstNextMonthDay.getTime()))
+                    : weekEnd;
+                const segments = calendar.getEvents()
+                    .map(event => {
+                        const segmentStart = new Date(Math.max(event.start.getTime(), visibleStart.getTime()));
+                        const segmentEnd = new Date(Math.min(eventEnd(event).getTime(), visibleEnd.getTime()));
+                        if (segmentStart >= segmentEnd) return null;
+                        return {
+                            event,
+                            startIndex: Math.round((segmentStart - weekStart) / 86400000),
+                            endIndex: Math.round((segmentEnd - weekStart) / 86400000)
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((left, right) => left.startIndex - right.startIndex || right.endIndex - left.endIndex || String(left.event.title).localeCompare(String(right.event.title), 'ko'));
+                const laneEnds = [];
+                segments.forEach(segment => {
+                    let lane = laneEnds.findIndex(endIndex => endIndex <= segment.startIndex);
+                    if (lane === -1) lane = laneEnds.length;
+                    laneEnds[lane] = segment.endIndex;
+                    segment.lane = lane;
+                });
+                return { segments, laneCount: laneEnds.length };
+            });
+            const weekHeights = weekLayouts.map(layout => Math.max(112, 34 + layout.laneCount * 24 + 8));
             const padding = 28;
             const sidebarWidth = includeRecentWeek ? 300 : 0;
             const columnGap = includeRecentWeek ? 24 : 0;
@@ -727,11 +752,10 @@ function downloadCalendarShareImage() {
             context.stroke();
 
             let rowY = calendarY + weekdayHeight;
-            weekRows.forEach((rows, weekIndex) => {
+            weekLayouts.forEach((layout, weekIndex) => {
                 const rowHeight = weekHeights[weekIndex];
-                rows.forEach((events, dayIndex) => {
+                weeks[weekIndex].forEach((date, dayIndex) => {
                     const cellX = calendarX + dayWidth * dayIndex;
-                    const date = weeks[weekIndex][dayIndex];
                     const isCurrent = isCurrentMonthDay(date);
                     context.strokeStyle = line;
                     context.strokeRect(cellX, rowY, dayWidth, rowHeight);
@@ -740,22 +764,25 @@ function downloadCalendarShareImage() {
                     context.textAlign = 'right';
                     context.font = '700 14px "Noto Sans KR", Arial, sans-serif';
                     context.fillText(String(date.getDate()), cellX + dayWidth - 8, rowY + 19);
-                    events.forEach((event, eventIndex) => {
-                        const game = event.extendedProps || {};
-                        const eventY = rowY + 28 + eventIndex * 24;
-                        context.fillStyle = event.backgroundColor || game.backgroundColor || accent;
-                        context.fillRect(cellX + 4, eventY, dayWidth - 8, 20);
-                        const suffix = game.hasExactDailySteamTime
-                            ? ` (+${Number(game.dailyIncrease || 0).toFixed(1)}h)`
-                            : ` (${Number(game.time || 0).toFixed(1)}h)`;
-                        const label = `${event.title}${suffix}${isGameFinished(game.isEnding) ? ' 🏆' : ''}`;
-                        context.fillStyle = '#ffffff';
-                        context.font = '700 11px "Noto Sans KR", Arial, sans-serif';
-                        context.textAlign = 'left';
-                        let clipped = label;
-                        while (clipped.length && context.measureText(clipped).width > dayWidth - 14) clipped = `${clipped.slice(0, -2)}…`;
-                        context.fillText(clipped, cellX + 8, eventY + 14);
-                    });
+                });
+                layout.segments.forEach(segment => {
+                    const event = segment.event;
+                    const game = event.extendedProps || {};
+                    const eventX = calendarX + dayWidth * segment.startIndex + 4;
+                    const eventY = rowY + 28 + segment.lane * 24;
+                    const eventWidth = dayWidth * (segment.endIndex - segment.startIndex) - 8;
+                    context.fillStyle = event.backgroundColor || game.backgroundColor || accent;
+                    context.fillRect(eventX, eventY, eventWidth, 20);
+                    const suffix = game.hasExactDailySteamTime
+                        ? ` (+${Number(game.dailyIncrease || 0).toFixed(1)}h)`
+                        : ` (${Number(game.time || 0).toFixed(1)}h)`;
+                    const label = `${event.title}${suffix}${isGameFinished(game.isEnding) ? ' 🏆' : ''}`;
+                    context.fillStyle = '#ffffff';
+                    context.font = '700 11px "Noto Sans KR", Arial, sans-serif';
+                    context.textAlign = 'left';
+                    let clipped = label;
+                    while (clipped.length && context.measureText(clipped).width > eventWidth - 10) clipped = `${clipped.slice(0, -2)}…`;
+                    context.fillText(clipped, eventX + 4, eventY + 14);
                 });
                 rowY += rowHeight;
             });
