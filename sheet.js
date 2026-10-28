@@ -4,6 +4,7 @@
 
 // 기존 10개 열을 유지하고, v2.29의 식별·정확도 열은 뒤에만 추가합니다.
 const SPREADSHEET_HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일'];
+const SHEET_BULK_WRITE_WARNING_COUNT = 20;
 
 function saveWebAppUrlFromInput() {
     let urlVal = document.getElementById('webAppUrlInput').value.trim();
@@ -628,7 +629,15 @@ function syncAllRecordsToGoogleSheet(options = {}) {
 }
 
 function syncChangedRecordsToGoogleSheet(records, options = {}) {
-    return syncRecordsToGoogleSheet(records, { ...options, actionLabel: options.actionLabel || '최근 Steam 플레이 동기화' });
+    // 단일 게임 추가·수정, 메모·한줄평 변경처럼 일부 행만 upsert하는 작업은
+    // 다른 시트 기록을 삭제하지 않으므로 전체 병합 경고를 띄우지 않습니다.
+    // 다만 한 번에 많은 행을 바꾸면 대량 반영 여부를 확인합니다.
+    const changedCount = Array.isArray(records) ? records.length : 0;
+    return syncRecordsToGoogleSheet(records, {
+        ...options,
+        skipConfirm: options.skipConfirm ?? changedCount < SHEET_BULK_WRITE_WARNING_COUNT,
+        actionLabel: options.actionLabel || '최근 Steam 플레이 동기화'
+    });
 }
 
 async function manuallySyncAllRecordsToGoogleSheet() {

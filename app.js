@@ -26,9 +26,10 @@ function getBetaSettings() {
             calendarBlockStyle: saved.calendarBlockStyle || 'merged',
             calendarMonthDisplay: saved.calendarMonthDisplay || 'current-month',
             showSteamTotalOnCalendar: Boolean(saved.showSteamTotalOnCalendar),
+            calendarFoldBelowHours: Math.max(0, Number(saved.calendarFoldBelowHours) || 0),
             themeMode: saved.themeMode || 'dark'
         };
-    } catch { return { platforms: DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: 'merged', calendarMonthDisplay: 'current-month', showSteamTotalOnCalendar: false, themeMode: 'dark' }; }
+    } catch { return { platforms: DEFAULT_PLATFORM_SETTINGS, calendarBlockStyle: 'merged', calendarMonthDisplay: 'current-month', showSteamTotalOnCalendar: false, calendarFoldBelowHours: 0, themeMode: 'dark' }; }
 }
 function saveBetaSettings(settings) { localStorage.setItem('game_effect_beta_settings', JSON.stringify(settings)); }
 function recordEditHistory(action, title, snapshot = localEvents, details = []) {
@@ -164,12 +165,12 @@ function endWorkProgress() {
     }
 }
 
-function syncAllRecordsSafely() {
+function syncAllRecordsSafely(options = {}) {
     if (typeof syncAllRecordsToGoogleSheet !== 'function') {
         console.warn('최신 sheet.js가 아직 배포되지 않아 구글 시트 동기화를 건너뜁니다.');
         return Promise.resolve();
     }
-    return syncAllRecordsToGoogleSheet();
+    return syncAllRecordsToGoogleSheet(options);
 }
 
 function syncChangedRecordsSafely(records, options = {}) {
@@ -500,13 +501,23 @@ function buildDailyCalendarEvents() {
             }
         });
         linkedChains.forEach(chain => {
+            // 바는 같은 게임의 전체 누적치가 아니라, 이 바가 차지하는 날짜 구간과
+            // 겹치는 기록만 합산해 표시합니다. (chain.end는 FullCalendar의 배타적 종료일)
+            const periodPlayTime = games
+                .filter(event => {
+                    const game = event.extendedProps;
+                    const recordStart = String(game.startDate || '');
+                    const recordEnd = String(game.rawEndDate || game.endDate || recordStart);
+                    return recordStart < chain.end && recordEnd >= chain.start;
+                })
+                .reduce((sum, event) => sum + getRecordMinutes(event.extendedProps) / 60, 0);
             const game = chain.event.extendedProps;
             calendarEvents.push({
                 ...chain.event,
                 id: `${chain.event.id}_linked_chain_${chain.start}`,
                 start: chain.start,
                 end: chain.end,
-                extendedProps: { ...game, originalEventId: chain.event.id, totalPlayTime, isCalendarLinkedDisplay: true }
+                extendedProps: { ...game, originalEventId: chain.event.id, totalPlayTime, periodPlayTime, isCalendarLinkedDisplay: true }
             });
         });
 
@@ -545,6 +556,22 @@ function buildDailyCalendarEvents() {
         });
     });
     return calendarEvents;
+}
+
+function getCalendarEventDisplayHours(event) {
+    const game = event?.extendedProps || {};
+    if (game.hasExactDailySteamTime) return Number(game.dailyIncrease || 0);
+    if (game.isCalendarLinkedDisplay) return Number(game.periodPlayTime ?? game.time ?? 0);
+    return Number(game.time || 0);
+}
+
+function isCalendarEventFolded(event) {
+    const threshold = getBetaSettings().calendarFoldBelowHours;
+    return threshold > 0 && getCalendarEventDisplayHours(event) < threshold;
+}
+
+function getVisibleCalendarEvents() {
+    return buildDailyCalendarEvents().filter(event => !isCalendarEventFolded(event));
 }
 
 function hideCalendarHoverCard() {
@@ -672,14 +699,44 @@ function isMobileCalendarLayout() {
     return window.matchMedia?.('(max-width: 768px)').matches;
 }
 
-function getCalendarEventsForDate(dateText) {
+function getCalendarEventsForDate(dateText, options = {}) {
     if (!calendar || !dateText) return [];
     const dayStart = new Date(`${dateText}T00:00:00`);
     const dayEnd = new Date(`${dateText}T00:00:00`);
     dayEnd.setDate(dayEnd.getDate() + 1);
-    return calendar.getEvents()
-        .filter(event => event.start < dayEnd && (event.end || new Date(event.start.getTime() + 86400000)) > dayStart)
+    const sourceEvents = options.includeFolded ? buildDailyCalendarEvents() : calendar.getEvents();
+    return sourceEvents
+        .filter(event => {
+            const eventStart = event.start instanceof Date ? event.start : new Date(`${event.start}T00:00:00`);
+            const eventEndValue = event.end || new Date(eventStart.getTime() + 86400000);
+            const eventEnd = eventEndValue instanceof Date ? eventEndValue : new Date(`${eventEndValue}T00:00:00`);
+            return eventStart < dayEnd && eventEnd > dayStart;
+        })
         .sort((left, right) => String(left.title).localeCompare(String(right.title), 'ko'));
+}
+
+function renderCalendarFoldSummaries() {
+    const calendarEl = document.getElementById('calendar');
+    if (!calendarEl) return;
+    calendarEl.querySelectorAll('.calendar-fold-summary').forEach(button => button.remove());
+    if (isMobileCalendarLayout() || getBetaSettings().calendarFoldBelowHours <= 0) return;
+
+    calendarEl.querySelectorAll('.fc-daygrid-day[data-date]').forEach(dayCell => {
+        const dateText = dayCell.dataset.date;
+        const foldedEvents = getCalendarEventsForDate(dateText, { includeFolded: true }).filter(isCalendarEventFolded);
+        if (foldedEvents.length === 0) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'calendar-fold-summary';
+        button.textContent = `짧은 기록 ${foldedEvents.length}개`;
+        button.setAttribute('aria-label', `${dateText}에 접힌 짧은 기록 ${foldedEvents.length}개 보기`);
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openMobileDayRecords(dateText, foldedEvents, '짧은 기록');
+        });
+        dayCell.querySelector('.fc-daygrid-day-events')?.appendChild(button);
+    });
 }
 
 function renderMobileCalendarDaySummaries() {
@@ -695,7 +752,7 @@ function renderMobileCalendarDaySummaries() {
         const date = new Date(`${dateText}T00:00:00`);
         const isCurrentMonth = date.getFullYear() === activeDate.getFullYear() && date.getMonth() === activeDate.getMonth();
         if (settings.calendarMonthDisplay === 'current-month' && !isCurrentMonth) return;
-        const events = getCalendarEventsForDate(dateText);
+        const events = getCalendarEventsForDate(dateText, { includeFolded: true });
         if (events.length === 0) return;
 
         const button = document.createElement('button');
@@ -712,13 +769,14 @@ function renderMobileCalendarDaySummaries() {
     });
 }
 
-function openMobileDayRecords(dateText) {
+function openMobileDayRecords(dateText, eventsOverride = null, titleSuffix = '기록') {
     const modal = document.getElementById('mobileDayRecordsModal');
     const title = document.getElementById('mobileDayRecordsTitle');
     const list = document.getElementById('mobileDayRecordsList');
     if (!modal || !title || !list) return;
-    const uniqueEvents = [...new Map(getCalendarEventsForDate(dateText).map(event => [event.extendedProps.originalEventId || event.id, event])).values()];
-    title.textContent = `${dateText.replace(/-/g, '.')} 기록`;
+    const sourceEvents = eventsOverride || getCalendarEventsForDate(dateText, { includeFolded: true });
+    const uniqueEvents = [...new Map(sourceEvents.map(event => [event.extendedProps.originalEventId || event.id, event])).values()];
+    title.textContent = `${dateText.replace(/-/g, '.')} ${titleSuffix}`;
     list.replaceChildren();
     if (uniqueEvents.length === 0) {
         const empty = document.createElement('p');
@@ -737,7 +795,7 @@ function openMobileDayRecords(dateText) {
         const timeLabel = game.hasExactDailySteamTime
             ? `+${Number(game.dailyIncrease || 0).toFixed(1)}시간`
             : game.isCalendarLinkedDisplay
-                ? `누적 ${Number(game.totalPlayTime ?? game.time ?? 0).toFixed(1)}시간`
+                ? `${Number(game.periodPlayTime ?? game.time ?? 0).toFixed(1)}시간`
                 : `${Number(game.time || 0).toFixed(1)}시간`;
         detail.textContent = `${timeLabel}${isGameFinished(game.isEnding) ? ' · 🏆 엔딩 완료' : ''}`;
         item.append(name, detail);
@@ -770,8 +828,15 @@ function downloadCalendarShareImage() {
             const view = calendar.view;
             const visibleMonth = calendar.getDate().getMonth();
             const visibleYear = calendar.getDate().getFullYear();
-            const start = new Date(view.activeStart);
-            const end = new Date(view.activeEnd);
+            // "1일부터 표시"여도 달력 칸은 실제 요일(일~토) 위치를 유지해야 합니다.
+            // FullCalendar의 activeStart는 환경에 따라 1일이 될 수 있으므로 직접 계산합니다.
+            const start = new Date(visibleYear, visibleMonth, 1);
+            start.setDate(start.getDate() - start.getDay());
+            const end = new Date(visibleYear, visibleMonth + 1, 0);
+            end.setDate(end.getDate() + (7 - end.getDay()));
+            if (settings.calendarMonthDisplay === 'full-grid') {
+                while ((end - start) / 86400000 < 42) end.setDate(end.getDate() + 7);
+            }
             const days = [];
             for (let cursor = new Date(start); cursor < end; cursor.setDate(cursor.getDate() + 1)) {
                 days.push(new Date(cursor));
@@ -886,7 +951,7 @@ function downloadCalendarShareImage() {
                     const suffix = game.hasExactDailySteamTime
                         ? ` (+${Number(game.dailyIncrease || 0).toFixed(1)}h)`
                         : game.isCalendarLinkedDisplay
-                            ? ` (누적 ${Number(game.totalPlayTime ?? game.time ?? 0).toFixed(1)}h)`
+                            ? ` (${Number(game.periodPlayTime ?? game.time ?? 0).toFixed(1)}h)`
                             : ` (${Number(game.time || 0).toFixed(1)}h)`;
                     const label = `${event.title}${suffix}${isGameFinished(game.isEnding) ? ' 🏆' : ''}`;
                     context.fillStyle = '#ffffff';
@@ -1130,6 +1195,31 @@ function handleGameSubmit(event) {
 
     const steamAppId = platform === 'steam' ? getSteamAppIdForTitle(name) : '';
     const newGameIdentity = { title: name, platform, steamAppId };
+    // Steam 외 플랫폼도 같은 게임 기록이 있으면, Steam 최근 동기화처럼
+    // 기존 행에 시간만 더할지 날짜별 새 행을 만들지 사용자가 결정합니다.
+    const matchingManualRecords = platform === 'steam' ? [] : getSameGameEvents(newGameIdentity);
+    if (matchingManualRecords.length > 0) {
+        const latestRecord = [...matchingManualRecords].sort((left, right) => {
+            const leftDate = String(left.extendedProps.rawEndDate || left.extendedProps.endDate || left.extendedProps.startDate || '');
+            const rightDate = String(right.extendedProps.rawEndDate || right.extendedProps.endDate || right.extendedProps.startDate || '');
+            return rightDate.localeCompare(leftDate) || right.id.localeCompare(left.id);
+        })[0];
+        const latestDate = String(latestRecord.extendedProps.rawEndDate || latestRecord.extendedProps.endDate || latestRecord.extendedProps.startDate || '');
+        const appendToExisting = confirm(
+            `같은 ${platform} 게임 기록이 있습니다.\n\n${latestDate} 기록: ${Number(latestRecord.extendedProps.time || 0).toFixed(1)}시간\n이번 입력: +${inputTime.toFixed(1)}시간\n\n확인: 기존 기록에 시간 합치기\n취소: ${startDate}의 새 기록으로 저장`
+        );
+        if (appendToExisting) {
+            setRecordMinutes(latestRecord.extendedProps, getRecordMinutes(latestRecord.extendedProps) + toPlaytimeMinutes(inputTime));
+            if (checkEnding) latestRecord.extendedProps.isEnding = endingStatusValue;
+            recordEditHistory('기록 시간 합치기', name, localEvents, [`기존 기록 날짜: ${latestDate}`, `추가 시간: ${inputTime}시간`, `플랫폼: ${platform}`]);
+            refreshUI();
+            saveToLocalStorage();
+            sendDataToGoogleSheet(latestRecord.extendedProps);
+            document.getElementById('gameForm').reset();
+            document.getElementById('autocompleteList').style.display = 'none';
+            return;
+        }
+    }
     const calendarLinkStart = getManualCalendarLinkStart(newGameIdentity, startDate);
     let newGame = createGameObj(name, startDate, calculatedEnd, platform, inputTime, endingStatusValue, '', '', checkEnding, steamAppId, null, { calendarLinkStart });
     recordEditHistory('기록 추가', name, localEvents, [`시작 날짜: ${startDate}`, `플랫폼: ${platform}`, `플레이 시간: ${inputTime}시간`]);
@@ -1622,7 +1712,9 @@ function deleteCurrentGame() {
         recordEditHistory('기록 삭제', deleted?.title || '이름 없음', localEvents, deleted ? [`시작 날짜: ${deleted.extendedProps.startDate}`, `플랫폼: ${deleted.extendedProps.platform}`] : []);
         localEvents = localEvents.filter(e => e.id !== currentSelectedEventId); 
         saveToLocalStorage();
-        syncAllRecordsSafely();
+        // 삭제 확인은 이미 마쳤고, 남은 기록을 다시 저장해도 다른 시트 행을
+        // 대량으로 지우거나 덮어쓰지 않으므로 전체 병합 경고는 생략합니다.
+        syncAllRecordsSafely({ skipConfirm: true, actionLabel: '게임 기록 삭제' });
         closeGameModal(); 
     } 
 }
@@ -1646,6 +1738,7 @@ function renderBetaSettings() {
     document.getElementById('calendarBlockStyle').value = settings.calendarBlockStyle;
     document.getElementById('calendarMonthDisplay').value = settings.calendarMonthDisplay;
     document.getElementById('showSteamTotalOnCalendar').value = String(settings.showSteamTotalOnCalendar);
+    document.getElementById('calendarFoldBelowHours').value = settings.calendarFoldBelowHours || '';
     document.getElementById('themeMode').value = settings.themeMode;
     document.getElementById('platformSettingsList').innerHTML = settings.platforms.map((item, index) => `<div class="platform-setting-row"><span>${escapeHtml(item.name)}</span><input type="color" value="${escapeHtml(item.color)}" data-platform-index="${index}"><button type="button" data-remove-platform="${index}">제거</button></div>`).join('');
     document.getElementById('platformSettingsList').querySelectorAll('[data-remove-platform]').forEach(button => button.addEventListener('click', () => {
@@ -1795,6 +1888,7 @@ function saveSettingsFromModal() {
     settings.calendarBlockStyle = document.getElementById('calendarBlockStyle').value;
     settings.calendarMonthDisplay = document.getElementById('calendarMonthDisplay').value;
     settings.showSteamTotalOnCalendar = document.getElementById('showSteamTotalOnCalendar').value === 'true';
+    settings.calendarFoldBelowHours = Math.max(0, Number(document.getElementById('calendarFoldBelowHours').value) || 0);
     settings.themeMode = document.getElementById('themeMode').value;
     document.querySelectorAll('[data-platform-index]').forEach(input => { settings.platforms[Number(input.dataset.platformIndex)].color = input.value; });
     saveBetaSettings(settings);
@@ -1804,6 +1898,7 @@ function saveSettingsFromModal() {
         const showFullGrid = settings.calendarMonthDisplay === 'full-grid';
         calendar.setOption('fixedWeekCount', showFullGrid);
         calendar.setOption('showNonCurrentDates', showFullGrid);
+        calendar.setOption('height', 'auto');
         document.getElementById('calendar')?.classList.toggle('calendar-current-month-only', !showFullGrid);
         calendar.updateSize();
     }
@@ -1868,12 +1963,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const calendarSettings = getBetaSettings();
     calendarEl.classList.toggle('calendar-current-month-only', calendarSettings.calendarMonthDisplay !== 'full-grid');
     calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: 'dayGridMonth', locale: 'ko',
+        initialView: 'dayGridMonth', locale: 'ko', height: 'auto', expandRows: false,
         fixedWeekCount: calendarSettings.calendarMonthDisplay === 'full-grid',
         showNonCurrentDates: calendarSettings.calendarMonthDisplay === 'full-grid',
-        events: function(fetchInfo, successCallback, failureCallback) { successCallback(buildDailyCalendarEvents()); },
-        datesSet: () => requestAnimationFrame(renderMobileCalendarDaySummaries),
-        eventsSet: () => requestAnimationFrame(renderMobileCalendarDaySummaries),
+        events: function(fetchInfo, successCallback, failureCallback) { successCallback(getVisibleCalendarEvents()); },
+        datesSet: () => requestAnimationFrame(() => { renderMobileCalendarDaySummaries(); renderCalendarFoldSummaries(); }),
+        eventsSet: () => requestAnimationFrame(() => { renderMobileCalendarDaySummaries(); renderCalendarFoldSummaries(); }),
         eventContent: function(arg) {
             let isEnd = arg.event.extendedProps.isEnding && arg.event.extendedProps.isEnding !== 'x';
             let customEl = document.createElement('div'); customEl.className = 'game-bar'; customEl.style.backgroundColor = arg.event.backgroundColor;
@@ -1886,7 +1981,7 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 const game = arg.event.extendedProps;
                 const timeLabel = game.isCalendarLinkedDisplay
-                    ? `누적 ${Number(game.totalPlayTime ?? game.time ?? 0).toFixed(1)}h`
+                    ? `${Number(game.periodPlayTime ?? game.time ?? 0).toFixed(1)}h`
                     : `${Number(game.time || 0).toFixed(1)}h`;
                 textSpan.innerText = `${arg.event.title} (${timeLabel})`;
             }
@@ -1912,7 +2007,7 @@ document.addEventListener('DOMContentLoaded', function() {
     calendar.render();
     window.matchMedia?.('(max-width: 768px)').addEventListener?.('change', () => {
         calendar.updateSize();
-        requestAnimationFrame(renderMobileCalendarDaySummaries);
+        requestAnimationFrame(() => { renderMobileCalendarDaySummaries(); renderCalendarFoldSummaries(); });
     });
 
     let cachedEvents = localStorage.getItem('cached_game_events');

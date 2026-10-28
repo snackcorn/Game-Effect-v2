@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.53</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.57</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -550,6 +550,13 @@ function output(data) {
                     <select id="showSteamTotalOnCalendar"><option value="false">달력에서 숨기기</option><option value="true">달력에 함께 표시</option></select>
                 </label>
                 <p>기본값은 증가한 시간만 표시합니다. 총 누적시간은 게임 위에 마우스를 올려도 확인할 수 있습니다.</p>
+            </section>
+            <section class="settings-section">
+                <h2>짧은 게임 기록 접기</h2>
+                <label>이 시간 미만 기록 접기
+                    <input id="calendarFoldBelowHours" type="number" min="0" step="0.1" inputmode="decimal" placeholder="예: 1">
+                </label>
+                <p>입력한 시간보다 짧은 기록은 달력 바에서 제외하고 날짜의 ‘짧은 기록 N개’ 버튼으로 접어 표시합니다. 비워 두거나 0이면 사용하지 않습니다.</p>
             </section>
             <section class="settings-section">
                 <h2>Steam 통합 런처 관리</h2>

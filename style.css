@@ -453,6 +453,14 @@ h1 {
     /* FullCalendar가 날짜 없는 앞·뒤 칸에 쓰는 기본 회색 변수까지 같은 배경으로 맞춥니다. */
     --fc-neutral-bg-color: var(--fc-page-bg-color);
 }
+#calendar .fc-scroller { overflow: visible !important; height: auto !important; }
+#calendar .fc-scroller-liquid-absolute { position: static !important; }
+.calendar-fold-summary {
+    display: block; width: calc(100% - 4px); margin: 3px 2px 0; padding: 3px 6px;
+    border: 1px dashed #64748b; border-radius: 4px; background: transparent; color: #cbd5e1;
+    font: inherit; font-size: .78em; text-align: left; cursor: pointer;
+}
+.calendar-fold-summary:hover { background: #334155; }
 
 .game-bar {
     padding: 3px 6px; border-radius: 4px; font-weight: bold; font-size: 0.85em; color: #ffffff;
@@ -774,6 +782,8 @@ body.light-theme h1, body.light-theme .modal-title { color: #4338ca; }
 body.light-theme .form-container, body.light-theme .calculator-container, body.light-theme .integration-panel-content, body.light-theme .top-action-bar, body.light-theme .modal-content, body.light-theme .recent-week-sidebar, body.light-theme .settings-section, body.light-theme .connection-input-section, body.light-theme .connection-action-section { background: #fff; color: #1f2937; }
 body.light-theme .mobile-day-record-item { background: #f8fafc; color: #1f2937; border-color: #6366f1; }
 body.light-theme .mobile-day-record-item span { color: #475569; }
+body.light-theme .calendar-fold-summary { color: #475569; border-color: #94a3b8; }
+body.light-theme .calendar-fold-summary:hover { background: #e2e8f0; }
 body.light-theme .usage-guide-section, body.light-theme .export-file-help { background: #f8fafc; color: #1f2937; }
 body.light-theme .usage-guide-section ul, body.light-theme .settings-section p, body.light-theme .platform-setting-row span, body.light-theme .edit-history-list { color: #334155; }
 body.light-theme .record-tools-help { background: #f8fafc; border-color: #cbd5e1; }
