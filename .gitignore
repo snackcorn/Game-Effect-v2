@@ -1,6 +1,18 @@
 .vercel/
 Game-Effect-v2/
 .local-only/
+node_modules/
+
+# 개인 기록·내보내기 파일은 저장소에 올리지 않습니다.
+outputs/
+*.xlsx
+*.xls
+*.csv
+
+# 로컬 정리 도구가 만든 캐시입니다.
+tools/__pycache__/
+*.pyc
+
 .env
 .env.*
 !.env.example

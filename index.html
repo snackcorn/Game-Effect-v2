@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.50</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.52</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -576,6 +576,14 @@ function output(data) {
                 <button type="button" class="data-reset-button" id="resetAllGameDataButton">게임 기록 데이터 초기화</button>
             </section>
             <button type="button" class="settings-save-button" id="saveSettingsButton">설정 저장</button>
+        </div>
+    </div>
+
+    <div id="mobileDayRecordsModal" class="modal mobile-day-records-modal" role="dialog" aria-modal="true" aria-labelledby="mobileDayRecordsTitle" aria-hidden="true">
+        <div class="modal-content mobile-day-records-content">
+            <button type="button" class="close-btn" aria-label="하루 기록 닫기" onclick="closeMobileDayRecords()">&times;</button>
+            <div class="modal-title" id="mobileDayRecordsTitle">하루 기록</div>
+            <div id="mobileDayRecordsList" class="mobile-day-records-list"></div>
         </div>
     </div>
 

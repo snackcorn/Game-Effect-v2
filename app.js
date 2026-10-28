@@ -377,6 +377,30 @@ function getSameGameEvents(gameOrEvent) {
     return localEvents.filter(event => getGameIdentity(event) === identity);
 }
 
+// Steam 동기화가 아닌 직접 입력 기록도 같은 게임·플랫폼의 최근 기록을
+// 달력에서 자연스럽게 이어 볼 수 있도록, 새 기록보다 앞선 마지막 기록을 찾습니다.
+function getLatestPreviousManualRecord(gameOrEvent, startDate) {
+    return getSameGameEvents(gameOrEvent)
+        .filter(event => {
+            const endDate = String(event.extendedProps.rawEndDate || event.extendedProps.endDate || event.extendedProps.startDate || '');
+            return endDate && endDate < startDate;
+        })
+        .sort((left, right) => {
+            const leftDate = String(left.extendedProps.rawEndDate || left.extendedProps.endDate || left.extendedProps.startDate || '');
+            const rightDate = String(right.extendedProps.rawEndDate || right.extendedProps.endDate || right.extendedProps.startDate || '');
+            return rightDate.localeCompare(leftDate) || right.id.localeCompare(left.id);
+        })[0] || null;
+}
+
+function getManualCalendarLinkStart(gameOrEvent, startDate) {
+    const previousRecord = getLatestPreviousManualRecord(gameOrEvent, startDate);
+    if (!previousRecord) return '';
+    const previousEnd = String(previousRecord.extendedProps.rawEndDate || previousRecord.extendedProps.endDate || previousRecord.extendedProps.startDate || '');
+    const gapDays = getDaysBetweenDates(previousEnd, startDate);
+    // Steam 최근 동기화와 같은 기준: 14일 이상 비었을 때만 독립 블록으로 남깁니다.
+    return gapDays >= 0 && gapDays < 14 ? previousEnd : '';
+}
+
 function getSmartGameColor(title) {
     let hash = 0;
     for (let i = 0; i < title.length; i++) hash = title.charCodeAt(i) + ((hash << 5) - hash);
@@ -642,6 +666,90 @@ function switchTab(viewId) {
         calendar.updateSize();
     }
     if ((viewId === 'report-view' || viewId === 'list-view') && localEvents.length > 0) { refreshUI(); }
+}
+
+function isMobileCalendarLayout() {
+    return window.matchMedia?.('(max-width: 768px)').matches;
+}
+
+function getCalendarEventsForDate(dateText) {
+    if (!calendar || !dateText) return [];
+    const dayStart = new Date(`${dateText}T00:00:00`);
+    const dayEnd = new Date(`${dateText}T00:00:00`);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    return calendar.getEvents()
+        .filter(event => event.start < dayEnd && (event.end || new Date(event.start.getTime() + 86400000)) > dayStart)
+        .sort((left, right) => String(left.title).localeCompare(String(right.title), 'ko'));
+}
+
+function renderMobileCalendarDaySummaries() {
+    const calendarEl = document.getElementById('calendar');
+    if (!calendarEl) return;
+    calendarEl.querySelectorAll('.mobile-day-summary').forEach(button => button.remove());
+    if (!isMobileCalendarLayout() || !calendar) return;
+
+    const settings = getBetaSettings();
+    const activeDate = calendar.getDate();
+    calendarEl.querySelectorAll('.fc-daygrid-day[data-date]').forEach(dayCell => {
+        const dateText = dayCell.dataset.date;
+        const date = new Date(`${dateText}T00:00:00`);
+        const isCurrentMonth = date.getFullYear() === activeDate.getFullYear() && date.getMonth() === activeDate.getMonth();
+        if (settings.calendarMonthDisplay === 'current-month' && !isCurrentMonth) return;
+        const events = getCalendarEventsForDate(dateText);
+        if (events.length === 0) return;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mobile-day-summary';
+        button.textContent = `${events.length}개 기록`;
+        button.setAttribute('aria-label', `${dateText} 기록 ${events.length}개 보기`);
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            openMobileDayRecords(dateText);
+        });
+        dayCell.querySelector('.fc-daygrid-day-frame')?.appendChild(button);
+    });
+}
+
+function openMobileDayRecords(dateText) {
+    const modal = document.getElementById('mobileDayRecordsModal');
+    const title = document.getElementById('mobileDayRecordsTitle');
+    const list = document.getElementById('mobileDayRecordsList');
+    if (!modal || !title || !list) return;
+    const uniqueEvents = [...new Map(getCalendarEventsForDate(dateText).map(event => [event.extendedProps.originalEventId || event.id, event])).values()];
+    title.textContent = `${dateText.replace(/-/g, '.')} 기록`;
+    list.replaceChildren();
+    if (uniqueEvents.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'mobile-day-records-empty';
+        empty.textContent = '이 날의 기록이 없습니다.';
+        list.appendChild(empty);
+    }
+    uniqueEvents.forEach(event => {
+        const game = event.extendedProps || {};
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'mobile-day-record-item';
+        const name = document.createElement('strong');
+        name.textContent = event.title;
+        const detail = document.createElement('span');
+        const timeLabel = game.hasExactDailySteamTime
+            ? `+${Number(game.dailyIncrease || 0).toFixed(1)}시간`
+            : `${Number(game.time || 0).toFixed(1)}시간`;
+        detail.textContent = `${timeLabel}${isGameFinished(game.isEnding) ? ' · 🏆 엔딩 완료' : ''}`;
+        item.append(name, detail);
+        item.addEventListener('click', () => {
+            closeMobileDayRecords();
+            openDetailModalById(game.originalEventId || event.id);
+        });
+        list.appendChild(item);
+    });
+    setModalVisibility(modal, true);
+}
+
+function closeMobileDayRecords() {
+    setModalVisibility(document.getElementById('mobileDayRecordsModal'), false);
 }
 
 function downloadCalendarShareImage() {
@@ -1016,7 +1124,10 @@ function handleGameSubmit(event) {
         return;
     }
 
-    let newGame = createGameObj(name, startDate, calculatedEnd, platform, inputTime, endingStatusValue, '', '', checkEnding, platform === 'steam' ? getSteamAppIdForTitle(name) : '');
+    const steamAppId = platform === 'steam' ? getSteamAppIdForTitle(name) : '';
+    const newGameIdentity = { title: name, platform, steamAppId };
+    const calendarLinkStart = getManualCalendarLinkStart(newGameIdentity, startDate);
+    let newGame = createGameObj(name, startDate, calculatedEnd, platform, inputTime, endingStatusValue, '', '', checkEnding, steamAppId, null, { calendarLinkStart });
     recordEditHistory('기록 추가', name, localEvents, [`시작 날짜: ${startDate}`, `플랫폼: ${platform}`, `플레이 시간: ${inputTime}시간`]);
     localEvents.push(newGame);
 
@@ -1757,6 +1868,8 @@ document.addEventListener('DOMContentLoaded', function() {
         fixedWeekCount: calendarSettings.calendarMonthDisplay === 'full-grid',
         showNonCurrentDates: calendarSettings.calendarMonthDisplay === 'full-grid',
         events: function(fetchInfo, successCallback, failureCallback) { successCallback(buildDailyCalendarEvents()); },
+        datesSet: () => requestAnimationFrame(renderMobileCalendarDaySummaries),
+        eventsSet: () => requestAnimationFrame(renderMobileCalendarDaySummaries),
         eventContent: function(arg) {
             let isEnd = arg.event.extendedProps.isEnding && arg.event.extendedProps.isEnding !== 'x';
             let customEl = document.createElement('div'); customEl.className = 'game-bar'; customEl.style.backgroundColor = arg.event.backgroundColor;
@@ -1784,6 +1897,10 @@ document.addEventListener('DOMContentLoaded', function() {
         eventClick: function(info) { openDetailModalById(info.event.extendedProps.originalEventId || info.event.id); }
     });
     calendar.render();
+    window.matchMedia?.('(max-width: 768px)').addEventListener?.('change', () => {
+        calendar.updateSize();
+        requestAnimationFrame(renderMobileCalendarDaySummaries);
+    });
 
     let cachedEvents = localStorage.getItem('cached_game_events');
     if (cachedEvents) {
@@ -1821,6 +1938,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target == modal) { closeGameModal(); }
         if (e.target === document.getElementById('usageGuideModal')) { closeUsageGuide(); }
         if (e.target === document.getElementById('settingsModal')) { closeSettings(); }
+        if (e.target === document.getElementById('mobileDayRecordsModal')) { closeMobileDayRecords(); }
         if (e.target === document.getElementById('steamTitleConverterModal')) { closeSteamTitleConverter(); }
         if (e.target === document.getElementById('initialSyncNextStepsModal')) { closeInitialSyncNextSteps(); }
         if (e.target === document.getElementById('initialSyncDataChoiceModal')) { selectInitialSyncDataMode('cancel'); }
@@ -1829,5 +1947,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && document.getElementById('usageGuideModal').style.display === 'flex') closeUsageGuide();
+        if (e.key === 'Escape' && document.getElementById('mobileDayRecordsModal').style.display === 'flex') closeMobileDayRecords();
     });
 });
