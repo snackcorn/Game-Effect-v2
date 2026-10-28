@@ -736,7 +736,9 @@ function openMobileDayRecords(dateText) {
         const detail = document.createElement('span');
         const timeLabel = game.hasExactDailySteamTime
             ? `+${Number(game.dailyIncrease || 0).toFixed(1)}시간`
-            : `${Number(game.time || 0).toFixed(1)}시간`;
+            : game.isCalendarLinkedDisplay
+                ? `누적 ${Number(game.totalPlayTime ?? game.time ?? 0).toFixed(1)}시간`
+                : `${Number(game.time || 0).toFixed(1)}시간`;
         detail.textContent = `${timeLabel}${isGameFinished(game.isEnding) ? ' · 🏆 엔딩 완료' : ''}`;
         item.append(name, detail);
         item.addEventListener('click', () => {
@@ -883,7 +885,9 @@ function downloadCalendarShareImage() {
                     context.fillRect(eventX, eventY, eventWidth, 20);
                     const suffix = game.hasExactDailySteamTime
                         ? ` (+${Number(game.dailyIncrease || 0).toFixed(1)}h)`
-                        : ` (${Number(game.time || 0).toFixed(1)}h)`;
+                        : game.isCalendarLinkedDisplay
+                            ? ` (누적 ${Number(game.totalPlayTime ?? game.time ?? 0).toFixed(1)}h)`
+                            : ` (${Number(game.time || 0).toFixed(1)}h)`;
                     const label = `${event.title}${suffix}${isGameFinished(game.isEnding) ? ' 🏆' : ''}`;
                     context.fillStyle = '#ffffff';
                     context.font = '700 11px "Noto Sans KR", Arial, sans-serif';
@@ -1880,7 +1884,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 const totalText = getBetaSettings().showSteamTotalOnCalendar ? ` · 총 ${totalTime.toFixed(1)}h` : '';
                 textSpan.innerText = `${arg.event.title} (+${dailyIncrease.toFixed(1)}h${totalText})`;
             } else {
-                textSpan.innerText = `${arg.event.title} (${Number(arg.event.extendedProps.time || 0).toFixed(1)}h)`;
+                const game = arg.event.extendedProps;
+                const timeLabel = game.isCalendarLinkedDisplay
+                    ? `누적 ${Number(game.totalPlayTime ?? game.time ?? 0).toFixed(1)}h`
+                    : `${Number(game.time || 0).toFixed(1)}h`;
+                textSpan.innerText = `${arg.event.title} (${timeLabel})`;
             }
             customEl.appendChild(textSpan);
             if (isEnd) { let trophySpan = document.createElement('span'); trophySpan.className = 'game-bar-trophy'; trophySpan.innerText = '🏆'; customEl.appendChild(trophySpan); }
@@ -1894,7 +1902,12 @@ document.addEventListener('DOMContentLoaded', function() {
             scheduleShortPlaytimeCollapse();
         },
         eventWillUnmount: hideCalendarHoverCard,
-        eventClick: function(info) { openDetailModalById(info.event.extendedProps.originalEventId || info.event.id); }
+        eventClick: function(info) {
+            openDetailModalById(
+                info.event.extendedProps.originalEventId || info.event.id,
+                { showAllRecords: Boolean(info.event.extendedProps.isCalendarLinkedDisplay) }
+            );
+        }
     });
     calendar.render();
     window.matchMedia?.('(max-width: 768px)').addEventListener?.('change', () => {
