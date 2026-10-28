@@ -525,6 +525,15 @@ function buildDailyCalendarEvents() {
             const game = event.extendedProps;
             const dates = getDatesInRange(game.startDate, game.rawEndDate || game.endDate || game.startDate);
             if (dates.length === 0) return;
+            const eventRangeEnd = addDays(game.rawEndDate || game.endDate || game.startDate, 1);
+            const periodPlayTime = games
+                .filter(candidate => {
+                    const candidateGame = candidate.extendedProps;
+                    const candidateStart = String(candidateGame.startDate || '');
+                    const candidateEnd = String(candidateGame.rawEndDate || candidateGame.endDate || candidateStart);
+                    return candidateStart < eventRangeEnd && candidateEnd >= game.startDate;
+                })
+                .reduce((sum, candidate) => sum + getRecordMinutes(candidate.extendedProps) / 60, 0);
             const isPartOfLinkedChain = linkedChains.some(chain =>
                 game.startDate >= chain.start && game.startDate < chain.end
             );
@@ -550,7 +559,16 @@ function buildDailyCalendarEvents() {
                 if (getBetaSettings().calendarBlockStyle === 'separate' && dates.length > 1) {
                     dates.forEach(date => calendarEvents.push({ ...event, id: `${event.id}_${date}`, start: date, end: addDays(date, 1), extendedProps: { ...game, originalEventId: event.id, totalPlayTime } }));
                 } else {
-                    calendarEvents.push({ ...event, extendedProps: { ...game, originalEventId: event.id, totalPlayTime } });
+                    calendarEvents.push({
+                        ...event,
+                        extendedProps: {
+                            ...game,
+                            originalEventId: event.id,
+                            totalPlayTime,
+                            periodPlayTime,
+                            isCalendarPeriodDisplay: dates.length > 1
+                        }
+                    });
                 }
             }
         });
@@ -561,7 +579,7 @@ function buildDailyCalendarEvents() {
 function getCalendarEventDisplayHours(event) {
     const game = event?.extendedProps || {};
     if (game.hasExactDailySteamTime) return Number(game.dailyIncrease || 0);
-    if (game.isCalendarLinkedDisplay) return Number(game.periodPlayTime ?? game.time ?? 0);
+    if (game.isCalendarLinkedDisplay || game.isCalendarPeriodDisplay) return Number(game.periodPlayTime ?? game.time ?? 0);
     return Number(game.time || 0);
 }
 
@@ -794,7 +812,7 @@ function openMobileDayRecords(dateText, eventsOverride = null, titleSuffix = '�
         const detail = document.createElement('span');
         const timeLabel = game.hasExactDailySteamTime
             ? `+${Number(game.dailyIncrease || 0).toFixed(1)}시간`
-            : game.isCalendarLinkedDisplay
+            : (game.isCalendarLinkedDisplay || game.isCalendarPeriodDisplay)
                 ? `${Number(game.periodPlayTime ?? game.time ?? 0).toFixed(1)}시간`
                 : `${Number(game.time || 0).toFixed(1)}시간`;
         detail.textContent = `${timeLabel}${isGameFinished(game.isEnding) ? ' · 🏆 엔딩 완료' : ''}`;
@@ -950,7 +968,7 @@ function downloadCalendarShareImage() {
                     context.fillRect(eventX, eventY, eventWidth, 20);
                     const suffix = game.hasExactDailySteamTime
                         ? ` (+${Number(game.dailyIncrease || 0).toFixed(1)}h)`
-                        : game.isCalendarLinkedDisplay
+                        : (game.isCalendarLinkedDisplay || game.isCalendarPeriodDisplay)
                             ? ` (${Number(game.periodPlayTime ?? game.time ?? 0).toFixed(1)}h)`
                             : ` (${Number(game.time || 0).toFixed(1)}h)`;
                     const label = `${event.title}${suffix}${isGameFinished(game.isEnding) ? ' 🏆' : ''}`;
@@ -1706,17 +1724,21 @@ function saveEditedData() {
     closeGameModal();
 }
 
-function deleteCurrentGame() { 
-    if (confirm("삭제하시겠습니까?")) { 
-        const deleted = localEvents.find(e => e.id === currentSelectedEventId);
-        recordEditHistory('기록 삭제', deleted?.title || '이름 없음', localEvents, deleted ? [`시작 날짜: ${deleted.extendedProps.startDate}`, `플랫폼: ${deleted.extendedProps.platform}`] : []);
-        localEvents = localEvents.filter(e => e.id !== currentSelectedEventId); 
-        saveToLocalStorage();
-        // 삭제 확인은 이미 마쳤고, 남은 기록을 다시 저장해도 다른 시트 행을
-        // 대량으로 지우거나 덮어쓰지 않으므로 전체 병합 경고는 생략합니다.
-        syncAllRecordsSafely({ skipConfirm: true, actionLabel: '게임 기록 삭제' });
-        closeGameModal(); 
-    } 
+async function deleteCurrentGame() { 
+    if (!confirm("삭제하시겠습니까?")) return;
+    const deleted = localEvents.find(e => e.id === currentSelectedEventId);
+    if (!deleted) return;
+
+    const recordId = String(deleted.extendedProps.recordId || deleted.id || '');
+    if (recordId && typeof deleteRecordsFromGoogleSheet === 'function') {
+        const sheetResult = await deleteRecordsFromGoogleSheet([recordId]);
+        if (sheetResult?.error) return;
+    }
+
+    recordEditHistory('기록 삭제', deleted.title || '이름 없음', localEvents, [`시작 날짜: ${deleted.extendedProps.startDate}`, `플랫폼: ${deleted.extendedProps.platform}`]);
+    localEvents = localEvents.filter(e => e.id !== currentSelectedEventId);
+    saveToLocalStorage();
+    closeGameModal();
 }
 
 function closeGameModal() { setModalVisibility(document.getElementById('gameModal'), false); if (currentSelectedGameTitle) { refreshUI(); } }
@@ -1980,7 +2002,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 textSpan.innerText = `${arg.event.title} (+${dailyIncrease.toFixed(1)}h${totalText})`;
             } else {
                 const game = arg.event.extendedProps;
-                const timeLabel = game.isCalendarLinkedDisplay
+                const timeLabel = (game.isCalendarLinkedDisplay || game.isCalendarPeriodDisplay)
                     ? `${Number(game.periodPlayTime ?? game.time ?? 0).toFixed(1)}h`
                     : `${Number(game.time || 0).toFixed(1)}h`;
                 textSpan.innerText = `${arg.event.title} (${timeLabel})`;

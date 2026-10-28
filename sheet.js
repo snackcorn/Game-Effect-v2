@@ -640,6 +640,24 @@ function syncChangedRecordsToGoogleSheet(records, options = {}) {
     });
 }
 
+function deleteRecordsFromGoogleSheet(recordIds, options = {}) {
+    const targetUrl = localStorage.getItem('user_local_web_app_url');
+    const normalizedIds = [...new Set((Array.isArray(recordIds) ? recordIds : []).map(String).filter(Boolean))];
+    if (!targetUrl || normalizedIds.length === 0) return Promise.resolve({ skipped: true, deletedCount: 0 });
+    return postWebAppData(targetUrl, { action: 'deleteRecords', recordIds: normalizedIds })
+        .then(result => {
+            if (result.result !== 'success' || typeof result.deletedCount !== 'number') {
+                throw new Error(result.message || '시트 삭제 기능을 확인하지 못했습니다. 최신 Apps Script 코드를 붙여 넣고 새 버전으로 배포해 주세요.');
+            }
+            return result;
+        })
+        .catch(error => {
+            console.error('구글 시트 삭제 오류:', error);
+            if (!options.silent) alert(`시트에서 기록을 삭제하지 못했습니다. ${error.message}`);
+            return { error };
+        });
+}
+
 async function manuallySyncAllRecordsToGoogleSheet() {
     const targetUrl = localStorage.getItem('user_local_web_app_url');
     if (!targetUrl) {

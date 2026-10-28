@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.57</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.59</span></h1>
 
     <div class="app-layout">
     <main class="app-main">
@@ -102,6 +102,11 @@ function doPost(e) {
       return output({ result: 'success', count: records.length });
     }
 
+    if (data.action === 'deleteRecords') {
+      const recordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
+      return output({ result: 'success', deletedCount: deleteRecords(recordIds) });
+    }
+
     const sheet = getYearSheet(getYear(data.startDate));
     sheet.appendRow(toRow(data));
     return output({ result: 'success' });
@@ -152,6 +157,28 @@ function upsertRecords(records) {
       else sheet.appendRow(row);
     });
   });
+}
+
+function deleteRecords(recordIds) {
+  const targetIds = new Set(recordIds.map(String).filter(Boolean));
+  if (targetIds.size === 0) return 0;
+  const allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+  const yearSheets = allSheets.filter(sheet => /^\d{4}$/.test(sheet.getName()));
+  const sourceSheets = yearSheets.length ? yearSheets : allSheets;
+  let deletedCount = 0;
+  sourceSheets.forEach(sheet => {
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    const idColumn = values[0].map(String).indexOf('기록 ID');
+    if (idColumn < 0) return;
+    const rowsToDelete = values.slice(1)
+      .map((row, index) => targetIds.has(String(row[idColumn] || '')) ? index + 2 : 0)
+      .filter(Boolean)
+      .sort((left, right) => right - left);
+    rowsToDelete.forEach(rowNumber => sheet.deleteRow(rowNumber));
+    deletedCount += rowsToDelete.length;
+  });
+  return deletedCount;
 }
 
 function legacyKeyFromRow(row) {
@@ -206,7 +233,7 @@ function output(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }</code></pre>
             </details>
-            <p class="guide-note">v2.44 코드는 <strong>기록 ID</strong>를 추가해 같은 행만 병합 저장하며, 시트에만 있는 기록은 삭제하지 않습니다. 처음 저장 전에는 시트 변경 경고가 표시됩니다.</p>
+            <p class="guide-note">기록 ID를 이용해 같은 행만 병합 저장하고, 사이트에서 게임을 삭제하면 해당 ID의 시트 행만 함께 삭제합니다. 처음 저장 전에는 시트 변경 경고가 표시됩니다.</p>
             <p class="guide-note"><strong>보안 설정:</strong> Apps Script 왼쪽의 <strong>프로젝트 설정 → 스크립트 속성</strong>에서 이름을 <code>GAME_EFFECT_SYNC_TOKEN</code>으로 만들고, 12자 이상 임의의 긴 값을 넣으세요. 같은 값을 위의 <strong>시트 동기화 키</strong>에 입력해야 저장·불러오기가 됩니다. 이 키는 GitHub·시트 셀·스크린샷에 올리지 마세요.</p>
         </section>
         <div class="integration-section-divider" role="separator"></div>

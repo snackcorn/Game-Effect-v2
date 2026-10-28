@@ -83,6 +83,10 @@ function doPost(e) {
       upsertRecords(records);
       return json({ result: 'success', count: records.length });
     }
+    if (data.action === 'deleteRecords') {
+      const recordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
+      return json({ result: 'success', deletedCount: deleteRecords(recordIds) });
+    }
     const sheet = getYearSheet(getYear(data.startDate));
     sheet.appendRow(toRow(data));
 
@@ -134,6 +138,28 @@ function upsertRecords(records) {
       else sheet.appendRow(row);
     });
   });
+}
+
+function deleteRecords(recordIds) {
+  const targetIds = new Set(recordIds.map(String).filter(Boolean));
+  if (targetIds.size === 0) return 0;
+  const allSheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+  const yearSheets = allSheets.filter(sheet => /^\d{4}$/.test(sheet.getName()));
+  const sourceSheets = yearSheets.length ? yearSheets : allSheets;
+  let deletedCount = 0;
+  sourceSheets.forEach(sheet => {
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    const idColumn = values[0].map(String).indexOf('기록 ID');
+    if (idColumn < 0) return;
+    const rowsToDelete = values.slice(1)
+      .map((row, index) => targetIds.has(String(row[idColumn] || '')) ? index + 2 : 0)
+      .filter(Boolean)
+      .sort((left, right) => right - left);
+    rowsToDelete.forEach(rowNumber => sheet.deleteRow(rowNumber));
+    deletedCount += rowsToDelete.length;
+  });
+  return deletedCount;
 }
 function legacyKeyFromRow(row) { return [row[0], row[1], row[2], row[3], row[4], row[8], row[9]].map(value => String(value ?? '')).join('\u001F'); }
 function legacyKeyFromRecord(record) { return [record.title, record.startDate, record.endDate, record.platform, Number(record.time || 0), record.steamAppId, record.steamTotal ?? ''].map(value => String(value ?? '')).join('\u001F'); }
@@ -206,6 +232,14 @@ function jsonp(data, callback) {
 - **연결 정보 복사·붙여넣기**: 스프레드시트 주소, Apps Script `/exec` 주소, SteamID64를 다른 환경으로 옮깁니다. 시트 동기화 키는 복사하지 않으므로 새 환경에서 직접 입력해야 합니다.
 
 ## Steam 연결하기
+
+### v2.59 변경 사항
+
+- 게임 삭제 시 기록 ID를 사용해 해당하는 스프레드시트 행만 함께 삭제합니다. 이 기능을 사용하려면 안내의 Apps Script 전체 코드를 교체하고 새 버전으로 배포해야 합니다.
+
+### v2.58 변경 사항
+
+- 여러 날짜에 걸친 일반 기록 바도 해당 날짜 범위와 겹치는 같은 게임의 시간만 합산해 표시합니다. 시간 0인 과거 날짜 행이 실제 플레이 시간을 0으로 보이게 하던 문제를 보완했습니다.
 
 ### v2.57 변경 사항
 
