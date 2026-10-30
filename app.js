@@ -583,6 +583,22 @@ function getCalendarEventDisplayHours(event) {
     return Number(game.time || 0);
 }
 
+// 날짜 범위는 양 끝을 모두 포함합니다. 긴 기록의 시간은 실제 일별 데이터가 없으므로
+// 겹치는 일수 비율로 나누고, 각 기록의 결과를 분 단위로 반올림해 무한소수를 남기지 않습니다.
+function getProportionalRecordMinutesInRange(gameOrEvent, rangeStart, rangeEnd) {
+    const game = gameOrEvent?.extendedProps || gameOrEvent || {};
+    const recordStart = String(game.startDate || '');
+    const recordEnd = String(game.rawEndDate || game.endDate || recordStart);
+    if (!recordStart || !recordEnd || !rangeStart || !rangeEnd) return 0;
+    const overlapStart = recordStart > rangeStart ? recordStart : rangeStart;
+    const overlapEnd = recordEnd < rangeEnd ? recordEnd : rangeEnd;
+    if (overlapStart > overlapEnd) return 0;
+    const totalDays = getDaysBetweenDates(recordStart, recordEnd) + 1;
+    const overlapDays = getDaysBetweenDates(overlapStart, overlapEnd) + 1;
+    if (totalDays <= 0 || overlapDays <= 0) return 0;
+    return Math.round(getRecordMinutes(game) * overlapDays / totalDays);
+}
+
 function isCalendarEventFolded(event) {
     const threshold = getBetaSettings().calendarFoldBelowHours;
     return threshold > 0 && getCalendarEventDisplayHours(event) < threshold;
@@ -717,6 +733,53 @@ function isMobileCalendarLayout() {
     return window.matchMedia?.('(max-width: 768px)').matches;
 }
 
+let activeMobilePage = 'calendar';
+
+function setMobilePage(pageName) {
+    if (!['calendar', 'record', 'week'].includes(pageName)) return;
+    activeMobilePage = pageName;
+    document.body.classList.remove('mobile-page-calendar', 'mobile-page-record', 'mobile-page-week');
+    document.body.classList.add(`mobile-page-${pageName}`);
+    document.querySelectorAll('.mobile-page-nav-button').forEach(button => {
+        const isActive = button.dataset.mobilePage === pageName;
+        button.classList.toggle('is-active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+    });
+    if (pageName === 'calendar' && calendar) {
+        requestAnimationFrame(() => calendar.updateSize());
+    }
+}
+
+function initializeMobilePageNavigation() {
+    document.querySelectorAll('.mobile-page-nav-button').forEach(button => {
+        button.addEventListener('click', () => setMobilePage(button.dataset.mobilePage));
+    });
+
+    const swipeTarget = document.querySelector('.app-layout');
+    if (!swipeTarget) return;
+    let startX = 0;
+    let startY = 0;
+    let swipeStartedOnControl = false;
+    swipeTarget.addEventListener('touchstart', event => {
+        if (!isMobileCalendarLayout() || event.touches.length !== 1) return;
+        swipeStartedOnControl = Boolean(event.target.closest('input, textarea, select, button, a, .fc-header-toolbar'));
+        startX = event.touches[0].clientX;
+        startY = event.touches[0].clientY;
+    }, { passive: true });
+    swipeTarget.addEventListener('touchend', event => {
+        if (!isMobileCalendarLayout() || swipeStartedOnControl || !startX) return;
+        const deltaX = event.changedTouches[0].clientX - startX;
+        const deltaY = event.changedTouches[0].clientY - startY;
+        startX = 0;
+        if (Math.abs(deltaX) < 70 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+        // 달력 가운데에서 왼쪽으로 넘기면 기록, 오른쪽으로 넘기면 최근 7일로 이동합니다.
+        if (deltaX < 0 && activeMobilePage === 'calendar') setMobilePage('record');
+        else if (deltaX > 0 && activeMobilePage === 'calendar') setMobilePage('week');
+        else if (deltaX > 0 && activeMobilePage === 'record') setMobilePage('calendar');
+        else if (deltaX < 0 && activeMobilePage === 'week') setMobilePage('calendar');
+    }, { passive: true });
+}
+
 function getCalendarEventsForDate(dateText, options = {}) {
     if (!calendar || !dateText) return [];
     const dayStart = new Date(`${dateText}T00:00:00`);
@@ -737,7 +800,7 @@ function renderCalendarFoldSummaries() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl) return;
     calendarEl.querySelectorAll('.calendar-fold-summary').forEach(button => button.remove());
-    if (isMobileCalendarLayout() || getBetaSettings().calendarFoldBelowHours <= 0) return;
+    if (getBetaSettings().calendarFoldBelowHours <= 0) return;
 
     calendarEl.querySelectorAll('.fc-daygrid-day[data-date]').forEach(dayCell => {
         const dateText = dayCell.dataset.date;
@@ -761,30 +824,8 @@ function renderMobileCalendarDaySummaries() {
     const calendarEl = document.getElementById('calendar');
     if (!calendarEl) return;
     calendarEl.querySelectorAll('.mobile-day-summary').forEach(button => button.remove());
-    if (!isMobileCalendarLayout() || !calendar) return;
-
-    const settings = getBetaSettings();
-    const activeDate = calendar.getDate();
-    calendarEl.querySelectorAll('.fc-daygrid-day[data-date]').forEach(dayCell => {
-        const dateText = dayCell.dataset.date;
-        const date = new Date(`${dateText}T00:00:00`);
-        const isCurrentMonth = date.getFullYear() === activeDate.getFullYear() && date.getMonth() === activeDate.getMonth();
-        if (settings.calendarMonthDisplay === 'current-month' && !isCurrentMonth) return;
-        const events = getCalendarEventsForDate(dateText, { includeFolded: true });
-        if (events.length === 0) return;
-
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'mobile-day-summary';
-        button.textContent = `${events.length}개 기록`;
-        button.setAttribute('aria-label', `${dateText} 기록 ${events.length}개 보기`);
-        button.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            openMobileDayRecords(dateText);
-        });
-        dayCell.querySelector('.fc-daygrid-day-frame')?.appendChild(button);
-    });
+    // 모바일도 데스크톱과 같은 게임 제목·시간 바를 직접 보여 줍니다.
+    // 기존의 "N개 기록" 버튼은 바를 가렸으므로 더 이상 만들지 않습니다.
 }
 
 function openMobileDayRecords(dateText, eventsOverride = null, titleSuffix = '기록') {
@@ -991,7 +1032,7 @@ function downloadCalendarShareImage() {
                 context.fillStyle = accent;
                 context.font = '700 16px "Noto Sans KR", Arial, sans-serif';
                 context.textAlign = 'left';
-                context.fillText('🎮 최근 7일 플레이 시간 TOP 10', sidebarX + 16, calendarY + 28);
+                context.fillText('🎮 최근 7일 추정 플레이 시간 TOP 10', sidebarX + 16, calendarY + 28);
                 const topItems = [...document.querySelectorAll('#recentWeekGames .recent-week-item')];
                 if (topItems.length === 0) {
                     context.fillStyle = muted;
@@ -1420,12 +1461,12 @@ function renderTopGames() {
     localEvents.filter(isSummaryRecord).forEach(event => {
         let game = event.extendedProps;
         let title = (game.title || event.title || '').trim();
-        let startDate = game.startDate || '';
-        if (!title || startDate < weekStartText || startDate > todayText) return;
+        const proportionalMinutes = getProportionalRecordMinutesInRange(game, weekStartText, todayText);
+        if (!title || proportionalMinutes <= 0) return;
 
         let key = getGameIdentity(game);
         let current = gamesByTitle.get(key) || { title: title, time: 0, event: event };
-        current.time += getRecordMinutes(game) / 60;
+        current.time += proportionalMinutes / 60;
         if ((game.rawEndDate || game.startDate || '') >= (current.event.extendedProps.rawEndDate || current.event.extendedProps.startDate || '')) {
             current.event = event;
         }
@@ -1525,7 +1566,7 @@ function openDetailModalById(id, options = {}) {
     document.getElementById('modalInfoGrid').style.display = 'grid';
     const modeNotice = document.getElementById('modalDetailModeNotice');
     modeNotice.style.display = showAllRecords ? 'block' : 'none';
-    if (showAllRecords) modeNotice.textContent = `모든 기록 ${sameGames.length}개를 합친 게임 전체 정보입니다.`;
+    modeNotice.textContent = showAllRecords ? `모든 기록 ${sameGames.length}개를 합친 게임 전체 정보입니다.` : '';
     document.getElementById('modalGameTitle').innerHTML = showAllRecords ? `${escapeHtml(gameObj.title)} <small>모든 기록</small>` : escapeHtml(gameObj.title);
     document.getElementById('modalGameTimeLabel').textContent = showAllRecords ? '⏱️ 전체 누적 플레이타임' : '⏱️ 플레이타임';
     document.getElementById('modalGameStartLabel').textContent = showAllRecords ? '📅 처음 기록한 날' : '📅 시작한 날';
@@ -1985,7 +2026,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const calendarSettings = getBetaSettings();
     calendarEl.classList.toggle('calendar-current-month-only', calendarSettings.calendarMonthDisplay !== 'full-grid');
     calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: 'dayGridMonth', locale: 'ko', height: 'auto', expandRows: false,
+        initialView: 'dayGridMonth', locale: 'ko', height: 'auto', expandRows: false, navLinks: false,
         fixedWeekCount: calendarSettings.calendarMonthDisplay === 'full-grid',
         showNonCurrentDates: calendarSettings.calendarMonthDisplay === 'full-grid',
         events: function(fetchInfo, successCallback, failureCallback) { successCallback(getVisibleCalendarEvents()); },
@@ -2027,7 +2068,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     calendar.render();
+    initializeMobilePageNavigation();
+    setMobilePage('calendar');
     window.matchMedia?.('(max-width: 768px)').addEventListener?.('change', () => {
+        if (!isMobileCalendarLayout()) document.body.classList.remove('mobile-page-calendar', 'mobile-page-record', 'mobile-page-week');
+        else setMobilePage(activeMobilePage);
         calendar.updateSize();
         requestAnimationFrame(() => { renderMobileCalendarDaySummaries(); renderCalendarFoldSummaries(); });
     });

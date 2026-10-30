@@ -13,7 +13,12 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.59</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.62</span></h1>
+    <nav class="mobile-page-navigation" aria-label="모바일 화면 전환">
+        <button type="button" class="mobile-page-nav-button is-active" data-mobile-page="calendar" aria-pressed="true">달력</button>
+        <button type="button" class="mobile-page-nav-button" data-mobile-page="record" aria-pressed="false">기록하기</button>
+        <button type="button" class="mobile-page-nav-button" data-mobile-page="week" aria-pressed="false">최근 7일</button>
+    </nav>
 
     <div class="app-layout">
     <main class="app-main">
@@ -677,7 +682,7 @@ function output(data) {
 
     </main>
     <aside class="recent-week-sidebar" aria-labelledby="topGamesTitle">
-        <div class="recent-week-title" id="topGamesTitle">🎮 최근 7일 플레이 시간 TOP 10</div>
+        <div class="recent-week-title" id="topGamesTitle">🎮 최근 7일 추정 플레이 시간 TOP 10</div>
         <div id="recentWeekGames" class="recent-week-list">최근 7일에 기록한 게임이 없습니다.</div>
     </aside>
     </div>

@@ -12,6 +12,7 @@ h1 {
     margin-bottom: 20px;
     color: #818cf8;
 }
+.mobile-page-navigation { display: none; }
 .app-layout {
     display: grid;
     grid-template-columns: minmax(0, 1200px) 320px;
@@ -779,6 +780,8 @@ h1 {
 .steam-launcher-child-add input:last-of-type { flex: .55; }
 body.light-theme { background: #f4f7fb; color: #1f2937; }
 body.light-theme h1, body.light-theme .modal-title { color: #4338ca; }
+body.light-theme .mobile-page-navigation { background: #fff; border-color: #cbd5e1; }
+body.light-theme .mobile-page-nav-button { color: #4338ca; }
 body.light-theme .form-container, body.light-theme .calculator-container, body.light-theme .integration-panel-content, body.light-theme .top-action-bar, body.light-theme .modal-content, body.light-theme .recent-week-sidebar, body.light-theme .settings-section, body.light-theme .connection-input-section, body.light-theme .connection-action-section { background: #fff; color: #1f2937; }
 body.light-theme .mobile-day-record-item { background: #f8fafc; color: #1f2937; border-color: #6366f1; }
 body.light-theme .mobile-day-record-item span { color: #475569; }
@@ -812,6 +815,30 @@ body.light-theme .record-tools-help dd { color: #475569; }
     body { padding: 12px; }
     h1 { font-size: 1.65em; margin: 8px 0 16px; }
     .app-version { font-size: 0.42em; }
+    .mobile-page-navigation {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+        max-width: 520px; margin: -6px auto 14px;
+        padding: 5px; border: 1px solid #3f3f50; border-radius: 10px; background: #252532;
+    }
+    .mobile-page-nav-button {
+        min-height: 36px; border: 0; border-radius: 7px; background: transparent; color: #a5b4fc;
+        font-size: .84em; font-weight: bold; cursor: pointer;
+    }
+    .mobile-page-nav-button.is-active { background: #4f46e5; color: #fff; }
+    body.mobile-page-calendar .app-main > :not(#calendar-view),
+    body.mobile-page-record .app-main > .content-view,
+    body.mobile-page-record .app-main > .tab-container,
+    body.mobile-page-week .app-main { display: none !important; }
+    body.mobile-page-calendar .recent-week-sidebar,
+    body.mobile-page-record .recent-week-sidebar { display: none; }
+    body.mobile-page-calendar #calendar-view { display: block !important; }
+    body.mobile-page-record .app-main { display: flex; flex-direction: column; }
+    body.mobile-page-record .flex-forms-wrapper { order: 1; }
+    body.mobile-page-record .top-action-bar { order: 2; }
+    body.mobile-page-record .integration-panel { order: 3; }
+    body.mobile-page-week .recent-week-sidebar {
+        display: block; max-width: 520px; margin: 0 auto; padding: 16px;
+    }
     .top-action-bar, .integration-panel-content { padding: 12px; }
     .top-action-bar { flex-direction: column; align-items: stretch; gap: 10px; }
     .top-action-bar .url-input-field { min-width: 0; width: 100%; box-sizing: border-box; }
@@ -836,14 +863,13 @@ body.light-theme .record-tools-help dd { color: #475569; }
     #calendar-container { padding: 12px; overflow: visible; }
     #calendar { min-width: 0; }
     .calendar-share-actions { justify-content: space-between; flex-wrap: wrap; }
-    #calendar .fc-daygrid-day-events { display: none; }
-    #calendar .fc-daygrid-day-frame { position: relative; min-height: 76px; }
+    #calendar .fc-daygrid-day-events { display: block; min-height: 0; margin: 0 2px; }
+    #calendar .fc-daygrid-day-frame { position: relative; min-height: 86px; }
     #calendar .fc-daygrid-day-top { position: relative; z-index: 1; }
-    .mobile-day-summary {
-        display: block; position: absolute; left: 5px; right: 5px; bottom: 6px;
-        min-height: 30px; padding: 4px 5px; border: 0; border-radius: 5px;
-        background: #4f46e5; color: #fff; font: inherit; font-size: .72em; font-weight: bold;
-    }
+    .mobile-day-summary { display: none !important; }
+    #calendar .fc-daygrid-event-harness { margin-top: 2px; }
+    #calendar .game-bar { min-height: 22px; padding: 3px 4px; font-size: .68em; line-height: 1.15; }
+    #calendar .game-bar-text { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .mobile-day-records-modal { align-items: flex-end; padding: 0; }
     .mobile-day-records-content {
         width: 100%; max-width: none; max-height: min(72dvh, 620px); margin: 0;
