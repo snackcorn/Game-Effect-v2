@@ -380,8 +380,23 @@ function getSameGameEvents(gameOrEvent) {
 
 // Steam 동기화가 아닌 직접 입력 기록도 같은 게임·플랫폼의 최근 기록을
 // 달력에서 자연스럽게 이어 볼 수 있도록, 새 기록보다 앞선 마지막 기록을 찾습니다.
+// 직접 입력한 Steam 기록은 AppID가 아직 없을 수 있어 제목·플랫폼 일치도 보조로 확인합니다.
+function getSameManualInputEvents(gameOrEvent) {
+    const exactMatches = getSameGameEvents(gameOrEvent);
+    if (exactMatches.length > 0) return exactMatches;
+    const game = gameOrEvent?.extendedProps || gameOrEvent || {};
+    const title = String(game.title || '').trim().toLocaleLowerCase();
+    const platform = String(game.platform || '').trim().toLocaleLowerCase();
+    if (!title || !platform) return [];
+    return localEvents.filter(event => {
+        const record = event.extendedProps || {};
+        return String(record.title || event.title || '').trim().toLocaleLowerCase() === title
+            && String(record.platform || '').trim().toLocaleLowerCase() === platform;
+    });
+}
+
 function getLatestPreviousManualRecord(gameOrEvent, startDate) {
-    return getSameGameEvents(gameOrEvent)
+    return getSameManualInputEvents(gameOrEvent)
         .filter(event => {
             const endDate = String(event.extendedProps.rawEndDate || event.extendedProps.endDate || event.extendedProps.startDate || '');
             return endDate && endDate < startDate;
@@ -393,13 +408,26 @@ function getLatestPreviousManualRecord(gameOrEvent, startDate) {
         })[0] || null;
 }
 
-function getManualCalendarLinkStart(gameOrEvent, startDate) {
+function chooseManualCalendarDisplay(gameOrEvent, startDate, endDate, inputTime) {
     const previousRecord = getLatestPreviousManualRecord(gameOrEvent, startDate);
     if (!previousRecord) return '';
     const previousEnd = String(previousRecord.extendedProps.rawEndDate || previousRecord.extendedProps.endDate || previousRecord.extendedProps.startDate || '');
     const gapDays = getDaysBetweenDates(previousEnd, startDate);
-    // Steam 최근 동기화와 같은 기준: 14일 이상 비었을 때만 독립 블록으로 남깁니다.
-    return gapDays >= 0 && gapDays < 14 ? previousEnd : '';
+    // 14일 이상 비었을 때는 독립 블록으로 남깁니다. 기록 데이터는 어느 선택에서도 새 행으로 보존합니다.
+    if (gapDays < 0 || gapDays >= 14) return '';
+    const game = gameOrEvent?.extendedProps || gameOrEvent || {};
+    const currentPeriod = startDate === endDate ? startDate : `${startDate} ~ ${endDate}`;
+    const connectAsBar = confirm(
+        `📅 같은 게임 기록 표시\n\n` +
+        `${game.title || '게임'} · ${game.platform || '플랫폼'}\n` +
+        `마지막 기록: ${previousEnd} · ${Number(previousRecord.extendedProps.time || 0).toFixed(1)}시간\n` +
+        `이번 기록: ${currentPeriod} · +${Number(inputTime || 0).toFixed(1)}시간\n\n` +
+        `각 기록은 별도로 저장됩니다.\n` +
+        `달력에서만 마지막 기록부터 바 형식으로 이어서 표시할까요?\n\n` +
+        `확인: 바 형식으로 이어 보기\n` +
+        `취소: 독립 블록으로 보기`
+    );
+    return connectAsBar ? previousEnd : '';
 }
 
 function getSmartGameColor(title) {
@@ -1254,32 +1282,7 @@ function handleGameSubmit(event) {
 
     const steamAppId = platform === 'steam' ? getSteamAppIdForTitle(name) : '';
     const newGameIdentity = { title: name, platform, steamAppId };
-    // Steam 외 플랫폼도 같은 게임 기록이 있으면, Steam 최근 동기화처럼
-    // 기존 행에 시간만 더할지 날짜별 새 행을 만들지 사용자가 결정합니다.
-    const matchingManualRecords = platform === 'steam' ? [] : getSameGameEvents(newGameIdentity);
-    if (matchingManualRecords.length > 0) {
-        const latestRecord = [...matchingManualRecords].sort((left, right) => {
-            const leftDate = String(left.extendedProps.rawEndDate || left.extendedProps.endDate || left.extendedProps.startDate || '');
-            const rightDate = String(right.extendedProps.rawEndDate || right.extendedProps.endDate || right.extendedProps.startDate || '');
-            return rightDate.localeCompare(leftDate) || right.id.localeCompare(left.id);
-        })[0];
-        const latestDate = String(latestRecord.extendedProps.rawEndDate || latestRecord.extendedProps.endDate || latestRecord.extendedProps.startDate || '');
-        const appendToExisting = confirm(
-            `같은 ${platform} 게임 기록이 있습니다.\n\n${latestDate} 기록: ${Number(latestRecord.extendedProps.time || 0).toFixed(1)}시간\n이번 입력: +${inputTime.toFixed(1)}시간\n\n확인: 기존 기록에 시간 합치기\n취소: ${startDate}의 새 기록으로 저장`
-        );
-        if (appendToExisting) {
-            setRecordMinutes(latestRecord.extendedProps, getRecordMinutes(latestRecord.extendedProps) + toPlaytimeMinutes(inputTime));
-            if (checkEnding) latestRecord.extendedProps.isEnding = endingStatusValue;
-            recordEditHistory('기록 시간 합치기', name, localEvents, [`기존 기록 날짜: ${latestDate}`, `추가 시간: ${inputTime}시간`, `플랫폼: ${platform}`]);
-            refreshUI();
-            saveToLocalStorage();
-            sendDataToGoogleSheet(latestRecord.extendedProps);
-            document.getElementById('gameForm').reset();
-            document.getElementById('autocompleteList').style.display = 'none';
-            return;
-        }
-    }
-    const calendarLinkStart = getManualCalendarLinkStart(newGameIdentity, startDate);
+    const calendarLinkStart = chooseManualCalendarDisplay(newGameIdentity, startDate, calculatedEnd, inputTime);
     let newGame = createGameObj(name, startDate, calculatedEnd, platform, inputTime, endingStatusValue, '', '', checkEnding, steamAppId, null, { calendarLinkStart });
     recordEditHistory('기록 추가', name, localEvents, [`시작 날짜: ${startDate}`, `플랫폼: ${platform}`, `플레이 시간: ${inputTime}시간`]);
     localEvents.push(newGame);
