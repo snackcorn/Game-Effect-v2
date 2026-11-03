@@ -399,7 +399,9 @@ function getLatestPreviousManualRecord(gameOrEvent, startDate) {
     return getSameManualInputEvents(gameOrEvent)
         .filter(event => {
             const endDate = String(event.extendedProps.rawEndDate || event.extendedProps.endDate || event.extendedProps.startDate || '');
-            return endDate && endDate < startDate;
+            // 같은 날짜에 새 기록을 추가할 수 있습니다. 이때도 이미 그날까지 이어진
+            // 바의 끝을 마지막 기록으로 사용해야 하므로 종료일이 같은 행을 포함합니다.
+            return endDate && endDate <= startDate;
         })
         .sort((left, right) => {
             const leftDate = String(left.extendedProps.rawEndDate || left.extendedProps.endDate || left.extendedProps.startDate || '');
@@ -1244,7 +1246,8 @@ function handleGameSubmit(event) {
         return;
     }
 
-    let todayStr = new Date().toISOString().split('T')[0];
+    // toISOString()은 UTC 기준이라 한국 시간 자정~오전 8:59에는 전날이 됩니다.
+    let todayStr = formatLocalDate(new Date());
     let endingStatusValue = checkEnding ? 'o' : 'x';
 
     if (checkEnding) {
@@ -1662,7 +1665,7 @@ function submitInstantMemo() {
 
     if (!dateInput) {
         if (activeRecord) { let p = activeRecord.extendedProps; targetStartDate = p.startDate + (p.endDate ? ` ~ ${p.endDate}` : ''); }
-        else { targetStartDate = new Date().toISOString().split('T')[0]; }
+        else { targetStartDate = formatLocalDate(new Date()); }
     } else { targetStartDate = dateInput; }
 
     if (activeRecord) {
