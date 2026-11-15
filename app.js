@@ -532,15 +532,8 @@ function buildDailyCalendarEvents() {
         });
         linkedChains.forEach(chain => {
             // 바는 같은 게임의 전체 누적치가 아니라, 이 바가 차지하는 날짜 구간과
-            // 겹치는 기록만 합산해 표시합니다. (chain.end는 FullCalendar의 배타적 종료일)
-            const periodPlayTime = games
-                .filter(event => {
-                    const game = event.extendedProps;
-                    const recordStart = String(game.startDate || '');
-                    const recordEnd = String(game.rawEndDate || game.endDate || recordStart);
-                    return recordStart < chain.end && recordEnd >= chain.start;
-                })
-                .reduce((sum, event) => sum + getRecordMinutes(event.extendedProps) / 60, 0);
+            // 겹치는 기록만 날짜 비율로 합산해 표시합니다. (chain.end는 FullCalendar의 배타적 종료일)
+            const periodPlayTime = getPeriodPlaytimeHours(games, chain.start, chain.end);
             const game = chain.event.extendedProps;
             calendarEvents.push({
                 ...chain.event,
@@ -556,18 +549,29 @@ function buildDailyCalendarEvents() {
             const dates = getDatesInRange(game.startDate, game.rawEndDate || game.endDate || game.startDate);
             if (dates.length === 0) return;
             const eventRangeEnd = addDays(game.rawEndDate || game.endDate || game.startDate, 1);
-            const periodPlayTime = games
-                .filter(candidate => {
-                    const candidateGame = candidate.extendedProps;
-                    const candidateStart = String(candidateGame.startDate || '');
-                    const candidateEnd = String(candidateGame.rawEndDate || candidateGame.endDate || candidateStart);
-                    return candidateStart < eventRangeEnd && candidateEnd >= game.startDate;
-                })
-                .reduce((sum, candidate) => sum + getRecordMinutes(candidate.extendedProps) / 60, 0);
-            const isPartOfLinkedChain = linkedChains.some(chain =>
-                game.startDate >= chain.start && game.startDate < chain.end
+            const periodPlayTime = getPeriodPlaytimeHours(games, game.startDate, eventRangeEnd);
+            const coveringChain = linkedChains.find(chain =>
+                game.startDate < chain.end && eventRangeEnd > chain.start
             );
-            if (isPartOfLinkedChain) return;
+
+            // 긴 기존 기록의 마지막 날부터 연결 바를 시작하면, 원래 바가 그 날까지
+            // 남아 두 바가 겹쳤습니다. 연결 구간 앞부분만 별도 표시해 겹침을 없앱니다.
+            if (coveringChain) {
+                if (game.startDate < coveringChain.start) {
+                    calendarEvents.push({
+                        ...event,
+                        end: coveringChain.start,
+                        extendedProps: {
+                            ...game,
+                            originalEventId: event.id,
+                            totalPlayTime,
+                            periodPlayTime: getPeriodPlaytimeHours(games, game.startDate, coveringChain.start),
+                            isCalendarPeriodDisplay: true
+                        }
+                    });
+                }
+                return;
+            }
             const hasExactDailySteamTime = game.steamTotal !== null && game.steamTotal !== '' && Number.isFinite(Number(game.steamTotal)) && dates.length === 1;
             if (hasExactDailySteamTime) {
                 calendarEvents.push({
@@ -627,6 +631,16 @@ function getProportionalRecordMinutesInRange(gameOrEvent, rangeStart, rangeEnd) 
     const overlapDays = getDaysBetweenDates(overlapStart, overlapEnd) + 1;
     if (totalDays <= 0 || overlapDays <= 0) return 0;
     return Math.round(getRecordMinutes(game) * overlapDays / totalDays);
+}
+
+// FullCalendar의 종료일은 배타적이므로, 표시 구간의 마지막 날짜를 한 번 되돌린 뒤
+// 각 기록의 겹치는 날짜 비율만 합산합니다. 긴 기록이 연결 바와 나뉘어도 시간이 중복되지 않습니다.
+function getPeriodPlaytimeHours(events, rangeStart, rangeEndExclusive) {
+    if (!rangeStart || !rangeEndExclusive || rangeEndExclusive <= rangeStart) return 0;
+    const rangeEnd = addDays(rangeEndExclusive, -1);
+    const minutes = events.reduce((sum, event) =>
+        sum + getProportionalRecordMinutesInRange(event, rangeStart, rangeEnd), 0);
+    return Number((minutes / 60).toFixed(1));
 }
 
 function isCalendarEventFolded(event) {
@@ -1846,6 +1860,13 @@ function renderSteamLauncherSettings() {
         title.textContent = launcher.title;
         const appId = document.createElement('small');
         appId.textContent = `AppID: ${launcher.appId}`;
+        const classifyExisting = document.createElement('button');
+        classifyExisting.type = 'button';
+        classifyExisting.textContent = '기존 기록 분류';
+        classifyExisting.addEventListener('click', async () => {
+            await classifyExistingLauncherRecords(launcher);
+            renderBetaSettings();
+        });
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.textContent = '런처 제거';
@@ -1856,7 +1877,7 @@ function renderSteamLauncherSettings() {
             saveSteamLauncherRegistry(updated);
             renderBetaSettings();
         });
-        head.append(title, appId, remove);
+        head.append(title, appId, classifyExisting, remove);
 
         const childList = document.createElement('div');
         childList.className = 'steam-launcher-child-list';
@@ -1912,7 +1933,42 @@ function renderSteamLauncherSettings() {
     });
 }
 
-function addSteamLauncherFromSettings() {
+async function classifyExistingLauncherRecords(launcher) {
+    const appId = String(launcher?.appId || '').trim();
+    if (!appId) return 0;
+    const candidates = localEvents.filter(event => {
+        const record = event.extendedProps || {};
+        return String(record.steamAppId || '').trim() === appId
+            && !record.isLauncherAllocation
+            && !record.parentAppId;
+    });
+    if (candidates.length === 0) return 0;
+
+    const groupedTitles = [...new Set(candidates.map(event => String(event.extendedProps.title || event.title || '').trim()).filter(Boolean))];
+    const preview = groupedTitles.slice(0, 6).join(', ');
+    const extra = groupedTitles.length > 6 ? ` 외 ${groupedTitles.length - 6}개` : '';
+    if (!confirm(
+        `'${launcher.title}' 통합 런처와 같은 AppID의 기존 기록 ${candidates.length}개를 하위 게임 기록으로 분류할까요?\n\n` +
+        `기존 게임 제목을 그대로 유지해 제목별 카드로 나뉩니다.\n` +
+        `대상: ${preview}${extra}\n\n` +
+        `기록의 시간·날짜는 바꾸지 않으며, 시트 연결 시 분류 결과도 저장됩니다.`
+    )) return 0;
+
+    recordEditHistory('통합 런처 기존 기록 분류', launcher.title, localEvents, [
+        `런처 AppID: ${appId}`,
+        `분류한 기록: ${candidates.length}개`
+    ]);
+    candidates.forEach(event => {
+        event.extendedProps.parentAppId = appId;
+        event.extendedProps.isLauncherAllocation = true;
+    });
+    saveToLocalStorage();
+    refreshUI();
+    await syncChangedRecordsSafely(candidates.map(event => event.extendedProps), { actionLabel: '통합 런처 기존 기록 분류' });
+    return candidates.length;
+}
+
+async function addSteamLauncherFromSettings() {
     if (typeof getSteamLauncherRegistry !== 'function') return;
     const titleInput = document.getElementById('newSteamLauncherTitle');
     const appIdInput = document.getElementById('newSteamLauncherAppId');
@@ -1924,6 +1980,7 @@ function addSteamLauncherFromSettings() {
     if (registry.some(launcher => launcher.appId === appId)) return alert('같은 Steam AppID의 런처가 이미 등록되어 있습니다.');
     registry.push({ title, appId, children: [] });
     saveSteamLauncherRegistry(registry);
+    await classifyExistingLauncherRecords({ title, appId });
     titleInput.value = '';
     appIdInput.value = '';
     renderBetaSettings();

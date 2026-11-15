@@ -691,6 +691,33 @@ async function manuallySyncAllRecordsToGoogleSheet() {
     }
 }
 
+// 원본 연도별 기록을 저장하거나 지우지 않고, Apps Script의 보기용 "게임 정리" 탭만 다시 만듭니다.
+async function refreshGoogleSheetSummary() {
+    const targetUrl = localStorage.getItem('user_local_web_app_url');
+    if (!targetUrl) {
+        alert('먼저 구글 시트 저장 주소와 시트 동기화 키를 저장해 주세요.');
+        return;
+    }
+    const button = document.getElementById('sheetSummaryRefreshButton');
+    if (button) {
+        button.disabled = true;
+        button.innerText = '⏳ 게임 정리 만드는 중...';
+    }
+    try {
+        const result = await postWebAppData(targetUrl, { action: 'refreshGameSummary' });
+        if (result.result !== 'success') throw new Error(result.message || '게임 정리를 만들지 못했습니다.');
+        alert('게임 정리 탭을 새로고침했습니다. 연도별 원본 기록은 변경하지 않았습니다.');
+    } catch (error) {
+        console.error('게임 정리 새로고침 오류:', error);
+        alert(`게임 정리를 새로고침하지 못했습니다. ${error.message}`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerText = '📑 게임 정리 새로고침';
+        }
+    }
+}
+
 function sendDataToGoogleSheet(record) {
     return record
         ? syncChangedRecordsToGoogleSheet([record], { actionLabel: '게임 기록 추가' })

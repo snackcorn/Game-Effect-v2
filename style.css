@@ -456,6 +456,8 @@ h1 {
 }
 #calendar .fc-scroller { overflow: visible !important; height: auto !important; }
 #calendar .fc-scroller-liquid-absolute { position: static !important; }
+/* 기록이 없는 달에도 날짜 칸이 너무 납작해지지 않도록 기존 달력 밀도를 유지합니다. */
+#calendar .fc-daygrid-day-frame { min-height: 120px; }
 .calendar-fold-summary {
     display: block; width: calc(100% - 4px); margin: 3px 2px 0; padding: 3px 6px;
     border: 1px dashed #64748b; border-radius: 4px; background: transparent; color: #cbd5e1;

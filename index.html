@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.66</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.68</span></h1>
     <nav class="mobile-page-navigation" aria-label="모바일 화면 전환">
         <button type="button" class="mobile-page-nav-button is-active" data-mobile-page="calendar" aria-pressed="true">달력</button>
         <button type="button" class="mobile-page-nav-button" data-mobile-page="record" aria-pressed="false">기록하기</button>
@@ -58,9 +58,9 @@
                 <div><strong>A1</strong><span>이름</span><small>필수</small></div>
                 <div><strong>B1</strong><span>시작일</span><small>종료일 중 하나</small></div>
             </div>
-            <p>권장 전체 헤더: <code>이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간</code></p>
+            <p>권장 전체 헤더: <code>이름 | 시작일 | 종료일 | 플랫폼 | 시간 | 엔딩여부 | 메모 | 한줄평 | Steam AppID | Steam 누적시간 | 기록 ID | 플레이시간(분) | 런처 부모 AppID | 런처 배분 기록 | 달력 연결 시작일</code></p>
             <p class="guide-note">같은 제목이라도 날짜가 다르면 각각 불러옵니다. 같은 제목·같은 날짜가 중복된 경우에만 <strong>Steam 누적시간</strong>이 가장 큰 행(없으면 <strong>시간</strong>이 가장 큰 행) 하나를 사용합니다. 로컬 기록과 시트 기록이 다를 때 <strong>기록 가져오기</strong>를 누르면, 시트 데이터를 사용할지 현재 로컬 기록을 유지할지 확인합니다.</p>
-            <p class="guide-note"><strong>주의:</strong> 기록 추가·수정·삭제·Steam 제목 변환은 현재 브라우저의 전체 기록을 연도별 시트에 다시 저장합니다. 시트를 처음 연결할 때는 먼저 <strong>시트 기록 불러오기</strong>로 시트 기록을 확인하고, 중요한 시트는 사본을 만들어 두세요. Steam만 사용할 때는 시트 연결이 필요하지 않습니다.</p>
+            <p class="guide-note"><strong>시트 저장 방식:</strong> 기록 추가·수정·삭제는 <strong>기록 ID가 같은 해당 행만</strong> 바꿉니다. 다른 원본 행은 지우지 않으며, 삭제도 선택한 기록 ID만 반영합니다. 저장 뒤에는 연도별 원본 탭을 바탕으로 <strong>게임 정리</strong> 탭이 자동 갱신됩니다. 중요한 시트는 처음 연결하기 전 사본을 만들어 두세요.</p>
             <p class="guide-note"><strong>처음 데이터 불러오기:</strong> 시트 주소와 SteamID64를 모두 입력하면 두 데이터를 함께 비교합니다. 둘 중 하나만 입력해도 해당 데이터만 불러올 수 있습니다. 시트만 불러올 때는 공개 시트 주소만으로도 가능하며, 둘을 함께 비교할 때만 Apps Script의 <code>/exec</code> 저장 주소가 필요합니다.</p>
             <div class="spreadsheet-preview" aria-label="스프레드시트 입력 예시">
                 <div class="spreadsheet-preview-title">스프레드시트 입력 예시</div>
@@ -85,6 +85,8 @@
                 <summary>📄 구글 시트 연동 코드 보기</summary>
                 <button type="button" id="copySpreadsheetGuideButton" class="copy-spreadsheet-code-button" onclick="copySpreadsheetGuideCode()">📋 전체 코드 복사</button>
                 <pre class="guide-code"><code id="spreadsheetAppsScriptCode">const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일'];
+const SUMMARY_SHEET_NAME = '게임 정리';
+const SUMMARY_HEADERS = ['게임', '첫 기록일', '마지막 기록일', '엔딩 여부', '플레이타임', '한줄평', '플랫폼', '비고'];
 const SYNC_TOKEN = PropertiesService.getScriptProperties().getProperty('GAME_EFFECT_SYNC_TOKEN');
 
 function requireToken(token) {
@@ -104,12 +106,20 @@ function doPost(e) {
     if (data.action === 'upsertRecords') {
       const records = Array.isArray(data.records) ? data.records : [];
       upsertRecords(records);
+      refreshGameSummary();
       return output({ result: 'success', count: records.length });
     }
 
     if (data.action === 'deleteRecords') {
       const recordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
-      return output({ result: 'success', deletedCount: deleteRecords(recordIds) });
+      const deletedCount = deleteRecords(recordIds);
+      refreshGameSummary();
+      return output({ result: 'success', deletedCount });
+    }
+
+    if (data.action === 'refreshGameSummary') {
+      refreshGameSummary();
+      return output({ result: 'success' });
     }
 
     const sheet = getYearSheet(getYear(data.startDate));
@@ -186,6 +196,87 @@ function deleteRecords(recordIds) {
   return deletedCount;
 }
 
+// 연도별 원본 기록은 건드리지 않고, 보기 편한 "게임 정리" 탭만 새로 만듭니다.
+// Steam 통합 런처의 하위 게임은 같은 런처 AppID라도 제목별로 따로 집계합니다.
+function refreshGameSummary() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const yearSheets = spreadsheet.getSheets().filter(sheet => /^\d{4}$/.test(sheet.getName()));
+  const groups = new Map();
+
+  yearSheets.forEach(sheet => {
+    const values = sheet.getDataRange().getValues();
+    if (values.length &lt; 2) return;
+    const headers = values[0].map(String);
+    const column = name => headers.indexOf(name);
+    const cell = (row, name) => {
+      const index = column(name);
+      const value = index &gt; -1 ? row[index] : '';
+      return value instanceof Date ? Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(value ?? '').trim();
+    };
+
+    values.slice(1).forEach(row => {
+      const title = cell(row, '이름');
+      if (!title) return;
+      const platform = cell(row, '플랫폼');
+      const steamAppId = cell(row, 'Steam AppID');
+      const parentAppId = cell(row, '런처 부모 AppID');
+      const isLauncherAllocation = cell(row, '런처 배분 기록').toUpperCase() === 'Y';
+      const identity = steamAppId
+        ? ((isLauncherAllocation || parentAppId)
+          ? `steam-launcher:${steamAppId}\u001F${title.toLocaleLowerCase()}`
+          : `steam:${steamAppId}`)
+        : `manual:${title.toLocaleLowerCase()}\u001F${platform.toLocaleLowerCase()}`;
+      const startDate = cell(row, '시작일');
+      const endDate = cell(row, '종료일') || startDate;
+      const endingStatus = cell(row, '엔딩여부');
+      const review = cell(row, '한줄평');
+      const time = Number(cell(row, '시간')) || 0;
+      const group = groups.get(identity) || {
+        title, firstStart: startDate, lastEnd: endDate, totalTime: 0,
+        platforms: new Set(), notes: new Set(), endingDate: '', endingStatus: '', latestReview: '', latestReviewDate: ''
+      };
+      if (startDate && (!group.firstStart || startDate &lt; group.firstStart)) group.firstStart = startDate;
+      if (endDate && (!group.lastEnd || endDate &gt; group.lastEnd)) group.lastEnd = endDate;
+      group.totalTime += time;
+      if (platform) group.platforms.add(platform);
+      if (steamAppId) group.notes.add(`Steam AppID ${steamAppId}`);
+      if (isLauncherAllocation || parentAppId) group.notes.add('통합 런처 하위 게임');
+      if (endingStatus && endingStatus !== 'x') {
+        const endingDate = endDate || startDate;
+        if (!group.endingDate || endingDate &gt;= group.endingDate) {
+          group.endingDate = endingDate;
+          group.endingStatus = endingStatus;
+        }
+      }
+      if (review && (!group.latestReviewDate || endDate &gt;= group.latestReviewDate)) {
+        group.latestReview = review;
+        group.latestReviewDate = endDate;
+      }
+      groups.set(identity, group);
+    });
+  });
+
+  const rows = [...groups.values()]
+    .sort((left, right) => right.lastEnd.localeCompare(left.lastEnd) || left.title.localeCompare(right.title, 'ko'))
+    .map(group => [
+      group.title,
+      group.firstStart,
+      group.lastEnd,
+      group.endingDate ? `${group.endingStatus === 'o' ? '엔딩' : group.endingStatus} · ${group.endingDate}` : '미완료',
+      Number(group.totalTime.toFixed(1)),
+      group.latestReview,
+      [...group.platforms].join(', '),
+      [...group.notes].join(' · ')
+    ]);
+  const summary = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME) || spreadsheet.insertSheet(SUMMARY_SHEET_NAME);
+  summary.clearContents();
+  summary.getRange(1, 1, 1, SUMMARY_HEADERS.length).setValues([SUMMARY_HEADERS]);
+  if (rows.length) summary.getRange(2, 1, rows.length, SUMMARY_HEADERS.length).setValues(rows);
+  summary.setFrozenRows(1);
+  summary.getRange(1, 1, 1, SUMMARY_HEADERS.length).setFontWeight('bold').setBackground('#dbeafe');
+  [28, 14, 14, 20, 14, 42, 20, 34].forEach((width, index) => summary.setColumnWidth(index + 1, width * 7));
+}
+
 function legacyKeyFromRow(row) {
   return [row[0], row[1], row[2], row[3], row[4], row[8], row[9]].map(value => String(value ?? '')).join('\u001F');
 }
@@ -238,7 +329,7 @@ function output(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }</code></pre>
             </details>
-            <p class="guide-note">기록 ID를 이용해 같은 행만 병합 저장하고, 사이트에서 게임을 삭제하면 해당 ID의 시트 행만 함께 삭제합니다. 처음 저장 전에는 시트 변경 경고가 표시됩니다.</p>
+            <p class="guide-note">기록 ID를 이용해 같은 행만 병합 저장하고, 사이트에서 게임을 삭제하면 해당 ID의 시트 행만 함께 삭제합니다. 저장 후 생성되는 <strong>게임 정리</strong> 탭은 원본을 바꾸지 않는 보기용 요약이며, 첫 기록일·마지막 기록일·엔딩 날짜·플레이타임·한줄평·플랫폼·통합 런처 여부를 보여 줍니다.</p>
             <p class="guide-note"><strong>보안 설정:</strong> Apps Script 왼쪽의 <strong>프로젝트 설정 → 스크립트 속성</strong>에서 이름을 <code>GAME_EFFECT_SYNC_TOKEN</code>으로 만들고, 12자 이상 임의의 긴 값을 넣으세요. 같은 값을 위의 <strong>시트 동기화 키</strong>에 입력해야 저장·불러오기가 됩니다. 이 키는 GitHub·시트 셀·스크린샷에 올리지 마세요.</p>
         </section>
         <div class="integration-section-divider" role="separator"></div>
@@ -274,6 +365,7 @@ function output(data) {
                 <button type="button" class="sync-trigger-btn" style="background-color: #475569;" onclick="copyConnectionInfo()">📋 연결 정보 복사</button>
                 <button type="button" class="sync-trigger-btn" style="background-color: #475569;" onclick="pasteConnectionInfo()">📥 연결 정보 붙여넣기</button>
                 <button type="button" id="manualSheetSyncButton" class="sync-trigger-btn" style="background-color: #2563eb;" onclick="manuallySyncAllRecordsToGoogleSheet()">☁️ 시트 수동 동기화</button>
+                <button type="button" id="sheetSummaryRefreshButton" class="sync-trigger-btn" style="background-color: #0f766e;" onclick="refreshGoogleSheetSummary()">📑 게임 정리 새로고침</button>
                 <button type="button" class="sync-trigger-btn export-btn" onclick="downloadRecordsAsCsv()">📄 CSV로 저장</button>
                 <button type="button" class="sync-trigger-btn export-btn xlsx-export-btn" onclick="downloadRecordsAsXlsx()">📊 Excel로 저장</button>
             </div>
