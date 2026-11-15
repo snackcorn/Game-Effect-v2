@@ -13,7 +13,7 @@
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.68</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.69</span></h1>
     <nav class="mobile-page-navigation" aria-label="모바일 화면 전환">
         <button type="button" class="mobile-page-nav-button is-active" data-mobile-page="calendar" aria-pressed="true">달력</button>
         <button type="button" class="mobile-page-nav-button" data-mobile-page="record" aria-pressed="false">기록하기</button>
@@ -221,11 +221,12 @@ function refreshGameSummary() {
       const steamAppId = cell(row, 'Steam AppID');
       const parentAppId = cell(row, '런처 부모 AppID');
       const isLauncherAllocation = cell(row, '런처 배분 기록').toUpperCase() === 'Y';
+      const platformKey = platform.toLocaleLowerCase();
       const identity = steamAppId
         ? ((isLauncherAllocation || parentAppId)
-          ? `steam-launcher:${steamAppId}\u001F${title.toLocaleLowerCase()}`
-          : `steam:${steamAppId}`)
-        : `manual:${title.toLocaleLowerCase()}\u001F${platform.toLocaleLowerCase()}`;
+          ? `steam-launcher:${steamAppId}\u001F${title.toLocaleLowerCase()}\u001F${platformKey}`
+          : `steam:${steamAppId}\u001F${platformKey}`)
+        : `manual:${title.toLocaleLowerCase()}\u001F${platformKey}`;
       const startDate = cell(row, '시작일');
       const endDate = cell(row, '종료일') || startDate;
       const endingStatus = cell(row, '엔딩여부');
@@ -239,7 +240,6 @@ function refreshGameSummary() {
       if (endDate && (!group.lastEnd || endDate &gt; group.lastEnd)) group.lastEnd = endDate;
       group.totalTime += time;
       if (platform) group.platforms.add(platform);
-      if (steamAppId) group.notes.add(`Steam AppID ${steamAppId}`);
       if (isLauncherAllocation || parentAppId) group.notes.add('통합 런처 하위 게임');
       if (endingStatus && endingStatus !== 'x') {
         const endingDate = endDate || startDate;
@@ -329,7 +329,7 @@ function output(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }</code></pre>
             </details>
-            <p class="guide-note">기록 ID를 이용해 같은 행만 병합 저장하고, 사이트에서 게임을 삭제하면 해당 ID의 시트 행만 함께 삭제합니다. 저장 후 생성되는 <strong>게임 정리</strong> 탭은 원본을 바꾸지 않는 보기용 요약이며, 첫 기록일·마지막 기록일·엔딩 날짜·플레이타임·한줄평·플랫폼·통합 런처 여부를 보여 줍니다.</p>
+            <p class="guide-note">기록 ID를 이용해 같은 행만 병합 저장하고, 사이트에서 게임을 삭제하면 해당 ID의 시트 행만 함께 삭제합니다. 저장 후 생성되는 <strong>게임 정리</strong> 탭은 원본을 바꾸지 않는 보기용 요약이며, 같은 제목이어도 플랫폼이 다르면 별도 행으로 정리됩니다. 첫 기록일·마지막 기록일·엔딩 날짜·플레이타임·한줄평·플랫폼·통합 런처 여부를 보여 줍니다.</p>
             <p class="guide-note"><strong>보안 설정:</strong> Apps Script 왼쪽의 <strong>프로젝트 설정 → 스크립트 속성</strong>에서 이름을 <code>GAME_EFFECT_SYNC_TOKEN</code>으로 만들고, 12자 이상 임의의 긴 값을 넣으세요. 같은 값을 위의 <strong>시트 동기화 키</strong>에 입력해야 저장·불러오기가 됩니다. 이 키는 GitHub·시트 셀·스크린샷에 올리지 마세요.</p>
         </section>
         <div class="integration-section-divider" role="separator"></div>
