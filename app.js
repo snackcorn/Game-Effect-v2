@@ -2124,10 +2124,8 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         eventWillUnmount: hideCalendarHoverCard,
         eventClick: function(info) {
-            openDetailModalById(
-                info.event.extendedProps.originalEventId || info.event.id,
-                { showAllRecords: Boolean(info.event.extendedProps.isCalendarLinkedDisplay) }
-            );
+            // 달력의 연결 바도 실제 마지막 기록을 열어 기간을 직접 수정할 수 있게 한다.
+            openDetailModalById(info.event.extendedProps.originalEventId || info.event.id);
         }
     });
     calendar.render();
