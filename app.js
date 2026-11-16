@@ -119,6 +119,10 @@ function migrateRecordDataModel(events = localEvents) {
             record.isLauncherAllocation = Boolean(record.parentAppId);
             changed = true;
         }
+        if (record.launcherChildAppId === undefined) {
+            record.launcherChildAppId = '';
+            changed = true;
+        }
     });
     return changed;
 }
@@ -1329,6 +1333,7 @@ function createGameObj(name, start, end, platform, time, endingStatus, memo, rev
         steamTotal: steamTotal !== null && steamTotal !== '' && Number.isFinite(Number(steamTotal)) ? Number(steamTotal) : null,
         isLauncherParent: Boolean(metadata.isLauncherParent),
         parentAppId: String(metadata.parentAppId || ''),
+        launcherChildAppId: String(metadata.launcherChildAppId || ''),
         isAllocated: Boolean(metadata.isAllocated),
         isLauncherAllocation: Boolean(metadata.isLauncherAllocation || metadata.parentAppId),
         calendarLinkStart: String(metadata.calendarLinkStart || '')
@@ -1916,16 +1921,27 @@ function renderSteamLauncherSettings() {
         const addChild = document.createElement('button');
         addChild.type = 'button';
         addChild.textContent = '하위 게임 추가';
-        addChild.addEventListener('click', () => {
+        addChild.addEventListener('click', async () => {
             const name = childTitle.value.trim();
             const storeAppId = childAppId.value.trim();
             if (!name) return alert('하위 게임 이름을 입력해 주세요.');
             if (storeAppId && !/^\d+$/.test(storeAppId)) return alert('상점 AppID는 숫자만 입력해 주세요.');
             const updated = getSteamLauncherRegistry();
-            if (updated[launcherIndex].children.some(child => child.title.toLocaleLowerCase() === name.toLocaleLowerCase())) return alert('같은 하위 게임이 이미 등록되어 있습니다.');
-            updated[launcherIndex].children.push({ title: name, appId: storeAppId });
+            const existingIndex = updated[launcherIndex].children.findIndex(child => child.title.toLocaleLowerCase() === name.toLocaleLowerCase());
+            let child;
+            if (existingIndex >= 0) {
+                const existing = updated[launcherIndex].children[existingIndex];
+                if (existing.appId || !storeAppId) return alert('같은 하위 게임이 이미 등록되어 있습니다.');
+                child = { ...existing, appId: storeAppId };
+                updated[launcherIndex].children[existingIndex] = child;
+            } else {
+                child = { title: name, appId: storeAppId };
+                updated[launcherIndex].children.push(child);
+            }
             saveSteamLauncherRegistry(updated);
+            const matchedCount = await classifyExistingRecordsForLauncherChild(updated[launcherIndex], child);
             renderBetaSettings();
+            if (matchedCount > 0) alert(`'${name}'과 같은 기존 런처 기록 ${matchedCount}개를 하위 게임으로 연결하고 시트에도 저장했습니다.`);
         });
         addRow.append(childTitle, childAppId, addChild);
         item.append(head, childList, addRow);
@@ -1966,6 +1982,44 @@ async function classifyExistingLauncherRecords(launcher) {
     refreshUI();
     await syncChangedRecordsSafely(candidates.map(event => event.extendedProps), { actionLabel: '통합 런처 기존 기록 분류' });
     return candidates.length;
+}
+
+// 하위 게임을 설정에 추가하면, 같은 제목으로 이미 적힌 런처 기록도 그 하위 게임에 연결한다.
+// 시간·날짜·원본 런처 AppID는 바꾸지 않는다.
+async function classifyExistingRecordsForLauncherChild(launcher, child) {
+    const launcherAppId = String(launcher?.appId || '').trim();
+    const childTitle = String(child?.title || '').trim();
+    if (!launcherAppId || !childTitle) return 0;
+
+    const childTitleKey = normalizeSearchText(childTitle);
+    const candidates = localEvents.filter(event => {
+        const record = event.extendedProps || {};
+        const isSameTitle = normalizeSearchText(record.title || event.title || '') === childTitleKey;
+        const isLauncherRecord = String(record.parentAppId || '').trim() === launcherAppId
+            || String(record.steamAppId || '').trim() === launcherAppId;
+        return isSameTitle && isLauncherRecord;
+    });
+    const changed = candidates.filter(event => {
+        const record = event.extendedProps;
+        return String(record.parentAppId || '').trim() !== launcherAppId
+            || !record.isLauncherAllocation
+            || String(record.launcherChildAppId || '').trim() !== String(child.appId || '').trim();
+    });
+    if (changed.length === 0) return 0;
+
+    recordEditHistory('통합 런처 하위 게임 연결', childTitle, localEvents, [
+        `부모 런처 AppID: ${launcherAppId}`,
+        `하위 게임으로 분류한 기존 기록: ${changed.length}개`
+    ]);
+    changed.forEach(event => {
+        event.extendedProps.parentAppId = launcherAppId;
+        event.extendedProps.isLauncherAllocation = true;
+        event.extendedProps.launcherChildAppId = String(child.appId || '');
+    });
+    saveToLocalStorage();
+    refreshUI();
+    await syncChangedRecordsSafely(changed.map(event => event.extendedProps), { actionLabel: '통합 런처 하위 게임 연결' });
+    return changed.length;
 }
 
 async function addSteamLauncherFromSettings() {

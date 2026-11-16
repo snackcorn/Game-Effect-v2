@@ -849,15 +849,41 @@ function normalizeSteamLauncherRegistry(registry) {
     })).filter(launcher => launcher.title && /^\d+$/.test(launcher.appId));
 }
 
+// 하위 게임 목록은 브라우저 설정이지만, 한 번이라도 배분된 기록이 있으면
+// 시트에서 불러온 기록으로 목록을 되살릴 수 있다. 부모 런처만 남고 하위 게임이
+// 사라지는 상황에서도 다음 동기화 전에 기존 제목을 다시 선택할 수 있게 한다.
+function restoreRecordedLauncherChildren(registry) {
+    if (!Array.isArray(localEvents) || localEvents.length === 0) return registry;
+    return registry.map(launcher => {
+        const childrenByTitle = new Map(launcher.children.map(child => [child.title.toLocaleLowerCase(), child]));
+        localEvents.forEach(event => {
+            const record = event.extendedProps || event || {};
+            const belongsToLauncher = String(record.parentAppId || '').trim() === launcher.appId;
+            const title = String(record.title || event.title || '').trim();
+            if (!belongsToLauncher || !title || title.toLocaleLowerCase() === launcher.title.toLocaleLowerCase()) return;
+            const key = title.toLocaleLowerCase();
+            const existing = childrenByTitle.get(key);
+            const childAppId = String(record.launcherChildAppId || '').trim();
+            if (!existing || (!existing.appId && childAppId)) {
+                childrenByTitle.set(key, { title, appId: childAppId });
+            }
+        });
+        return { ...launcher, children: [...childrenByTitle.values()] };
+    });
+}
+
 function getSteamLauncherRegistry() {
+    let registry;
     try {
         const stored = localStorage.getItem(STEAM_LAUNCHER_REGISTRY_STORAGE_KEY);
-        if (stored) return normalizeSteamLauncherRegistry(JSON.parse(stored));
+        if (stored) registry = normalizeSteamLauncherRegistry(JSON.parse(stored));
     } catch (_) {}
-    const defaults = normalizeSteamLauncherRegistry(DEFAULT_STEAM_LAUNCHER_REGISTRY);
-    const legacyTitle = String(getSteamLauncherTitleMappings()['1938090'] || '').trim();
-    if (legacyTitle) defaults[0].children.push({ title: legacyTitle, appId: '' });
-    return defaults;
+    if (!registry) {
+        registry = normalizeSteamLauncherRegistry(DEFAULT_STEAM_LAUNCHER_REGISTRY);
+        const legacyTitle = String(getSteamLauncherTitleMappings()['1938090'] || '').trim();
+        if (legacyTitle) registry[0].children.push({ title: legacyTitle, appId: '' });
+    }
+    return restoreRecordedLauncherChildren(registry);
 }
 
 function saveSteamLauncherRegistry(registry) {
@@ -966,11 +992,13 @@ function confirmSteamLauncherAllocation() {
     for (const select of selects) {
         const appId = select.dataset.steamAppId;
         const title = String(select.value || '').trim();
-        if (!title) {
+        const candidate = [...getSteamLauncherRegistry()].find(item => item.appId === appId);
+        const child = candidate?.children.find(item => item.title === title);
+        if (!title || !child) {
             alert('기록할 하위 게임을 선택해 주세요.');
             return;
         }
-        allocations.set(appId, title);
+        allocations.set(appId, child);
         mappings[appId] = title;
     }
     localStorage.setItem(STEAM_LAUNCHER_TITLE_MAP_STORAGE_KEY, JSON.stringify(mappings));
@@ -1012,6 +1040,10 @@ function chooseSteamCalendarDisplay(previousRecord, title, syncDate) {
     return connectAsBar ? previousDate : '';
 }
 
+function getSelectedLauncherChildTitle(selection) {
+    return typeof selection === 'string' ? selection : String(selection?.title || '');
+}
+
 function getRecentSteamRecordCandidates(games, todayStr, launcherTitleByAppId = new Map()) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 6);
@@ -1029,7 +1061,7 @@ function getRecentSteamRecordCandidates(games, todayStr, launcherTitleByAppId = 
         const currentTotalSteamHours = parseFloat((Number(game.playtime_forever || 0) / 60).toFixed(1));
         if (parseFloat((currentTotalSteamHours - recordedTotalHours).toFixed(1)) <= 0) return [];
 
-        const selectedLauncherTitle = launcherTitleByAppId.get(steamAppId);
+        const selectedLauncherTitle = getSelectedLauncherChildTitle(launcherTitleByAppId.get(steamAppId));
         const recentRecords = existingRecords.filter(record => {
             const startDate = String(record.extendedProps.startDate || '');
             const endDate = String(record.extendedProps.rawEndDate || record.extendedProps.endDate || startDate);
@@ -1239,7 +1271,8 @@ async function syncRecentSteamPlaytime(options = {}) {
             if (diffMinutes > 0) {
                 // 통합 최초 불러오기에서는 시트에 이미 적힌 시간을 먼저 유지하고,
                 // Steam 누적시간과의 차이만 마지막 실행일에 별도 기록합니다.
-                const selectedLauncherTitle = launcherTitleByAppId.get(steamAppId);
+                const selectedLauncher = launcherTitleByAppId.get(steamAppId);
+                const selectedLauncherTitle = getSelectedLauncherChildTitle(selectedLauncher);
                 const displayName = selectedLauncherTitle || existingRecords[0]?.title || name;
                 const latestRecordedDate = existingRecords.reduce((latest, record) => {
                     const recordDate = String(
@@ -1283,6 +1316,7 @@ async function syncRecentSteamPlaytime(options = {}) {
                     const newGame = createGameObj(displayName, syncDate, syncDate, 'steam', diffHours, 'x', syncMemo, '', false, steamAppId, currentTotalSteamHours, {
                         parentAppId: selectedLauncherTitle ? steamAppId : '',
                         isLauncherAllocation: Boolean(selectedLauncherTitle),
+                        launcherChildAppId: selectedLauncherTitle ? String(selectedLauncher?.appId || '') : '',
                         calendarLinkStart
                     });
                     // 어떤 외부 데이터나 이전 버전의 저장값이 들어와도 0분 행은 만들지 않습니다.

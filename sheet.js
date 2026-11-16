@@ -3,7 +3,7 @@
 // ==========================================
 
 // 기존 10개 열을 유지하고, v2.29의 식별·정확도 열은 뒤에만 추가합니다.
-const SPREADSHEET_HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일'];
+const SPREADSHEET_HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일', '하위 게임 Steam AppID'];
 const SHEET_BULK_WRITE_WARNING_COUNT = 20;
 
 function saveWebAppUrlFromInput() {
@@ -106,7 +106,8 @@ function recordToSpreadsheetRow(game) {
         getRecordMinutes(game),
         game.parentAppId || '',
         game.isLauncherAllocation ? 'Y' : '',
-        game.calendarLinkStart || ''
+        game.calendarLinkStart || '',
+        game.launcherChildAppId || ''
     ];
 }
 
@@ -370,6 +371,7 @@ function parseAndRenderCSV(csvText) {
     let parentAppIdIdx = cols.indexOf('런처 부모 AppID');
     let launcherAllocationIdx = cols.indexOf('런처 배분 기록');
     let calendarLinkStartIdx = cols.indexOf('달력 연결 시작일');
+    let launcherChildAppIdIdx = cols.indexOf('하위 게임 Steam AppID');
 
     if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) return;
 
@@ -393,12 +395,13 @@ function parseAndRenderCSV(csvText) {
         let parentAppId = parentAppIdIdx !== -1 ? String(row[parentAppIdIdx] || '').trim() : '';
         let isLauncherAllocation = launcherAllocationIdx !== -1 && String(row[launcherAllocationIdx] || '').trim().toUpperCase() === 'Y';
         let calendarLinkStart = calendarLinkStartIdx !== -1 ? String(row[calendarLinkStartIdx] || '').trim() : '';
+        let launcherChildAppId = launcherChildAppIdIdx !== -1 ? String(row[launcherChildAppIdIdx] || '').trim() : '';
 
         if (!name || (!startDate && !endDate)) continue;
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.includes('엔딩') || endingStatus.includes('%'));
-        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal, { recordId, playtimeMinutes: minutes, parentAppId, isLauncherAllocation, calendarLinkStart }));
+        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal, { recordId, playtimeMinutes: minutes, parentAppId, isLauncherAllocation, calendarLinkStart, launcherChildAppId }));
     }
     applyIncomingSheetRecords(parsedEvents, 'CSV');
 }
@@ -436,6 +439,7 @@ window.handleGoogleSheetResponse = function(rawJson) {
     let parentAppIdIdx = cols.indexOf('런처 부모 AppID');
     let launcherAllocationIdx = cols.indexOf('런처 배분 기록');
     let calendarLinkStartIdx = cols.indexOf('달력 연결 시작일');
+    let launcherChildAppIdIdx = cols.indexOf('하위 게임 Steam AppID');
 
     if (nameIdx === -1 || (startIdx === -1 && endIdx === -1)) { endWorkProgress(); return; }
 
@@ -461,12 +465,13 @@ window.handleGoogleSheetResponse = function(rawJson) {
         let parentAppId = parentAppIdIdx !== -1 && row[parentAppIdIdx]?.v ? String(row[parentAppIdIdx].v).trim() : '';
         let isLauncherAllocation = launcherAllocationIdx !== -1 && String(row[launcherAllocationIdx]?.v || '').trim().toUpperCase() === 'Y';
         let calendarLinkStart = calendarLinkStartIdx !== -1 && row[calendarLinkStartIdx]?.v ? String(row[calendarLinkStartIdx].v).trim() : '';
+        let launcherChildAppId = launcherChildAppIdIdx !== -1 && row[launcherChildAppIdIdx]?.v ? String(row[launcherChildAppIdIdx].v).trim() : '';
 
         if (!name || (!startDate && !endDate)) continue;
         if (memo === '기록된 메모가 없습니다.' || memo === '-') memo = '';
 
         let isEndMark = (endingStatus === 'o' || endingStatus.toString().includes('엔딩') || endingStatus.toString().includes('%'));
-        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal, { recordId, playtimeMinutes: minutes, parentAppId, isLauncherAllocation, calendarLinkStart }));
+        parsedEvents.push(createGameObj(name, startDate, endDate, platform, time, endingStatus, memo, review, isEndMark, steamAppId, steamTotal, { recordId, playtimeMinutes: minutes, parentAppId, isLauncherAllocation, calendarLinkStart, launcherChildAppId }));
     }
 
     applyIncomingSheetRecords(parsedEvents, '구글 시트');
