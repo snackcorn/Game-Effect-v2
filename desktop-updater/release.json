@@ -1,0 +1,7 @@
+{
+  "toolVersion": "1.0.0",
+  "targetSiteVersion": "2.74",
+  "schemaRevision": 1,
+  "migrations": ["record-id", "minutes-from-hours", "launcher-metadata"],
+  "headers": ["이름", "시작일", "종료일", "플랫폼", "시간", "엔딩여부", "메모", "한줄평", "Steam AppID", "Steam 누적시간", "기록 ID", "플레이시간(분)", "런처 부모 AppID", "런처 배분 기록", "달력 연결 시작일", "하위 게임 Steam AppID"]
+}

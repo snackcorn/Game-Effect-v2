@@ -6,19 +6,40 @@
 const SPREADSHEET_HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일', '하위 게임 Steam AppID'];
 const SHEET_BULK_WRITE_WARNING_COUNT = 20;
 
+function getStoredSheetSyncToken() {
+    return sessionStorage.getItem('user_local_sheet_sync_token') || localStorage.getItem('user_local_sheet_sync_token') || '';
+}
+
+function storeSheetSyncToken(token) {
+    const remember = Boolean(document.getElementById('rememberSheetSyncToken')?.checked);
+    const preferred = remember ? localStorage : sessionStorage;
+    const other = remember ? sessionStorage : localStorage;
+    preferred.setItem('user_local_sheet_sync_token', token);
+    other.removeItem('user_local_sheet_sync_token');
+}
+
+function cleanWebAppUrl(value) {
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:[?#].*)?$/.test(value || '')) return '';
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+}
+
 function saveWebAppUrlFromInput() {
     let urlVal = document.getElementById('webAppUrlInput').value.trim();
     if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(urlVal)) {
         alert("구글 시트 저장 주소는 Apps Script의 https://script.google.com/macros/s/.../exec 주소만 사용할 수 있습니다.");
         return;
     }
-    const token = document.getElementById('sheetSyncTokenInput')?.value.trim() || localStorage.getItem('user_local_sheet_sync_token') || '';
+    const token = document.getElementById('sheetSyncTokenInput')?.value.trim() || getStoredSheetSyncToken();
     if (token.length < 12) {
         alert('시트 동기화 키를 12자 이상 입력하고 연결 정보를 저장해 주세요.');
         return;
     }
+    urlVal = cleanWebAppUrl(urlVal);
     localStorage.setItem('user_local_web_app_url', urlVal);
-    localStorage.setItem('user_local_sheet_sync_token', token);
+    storeSheetSyncToken(token);
     alert("구글 시트 저장 주소가 이 브라우저에 저장되었습니다. 🔒");
     document.getElementById('webAppUrlInput').value = urlVal;
 }
@@ -37,11 +58,11 @@ function getSavedWebAppUrl() {
         alert("구글 시트 저장 주소는 Apps Script의 https://script.google.com/macros/s/.../exec 주소만 사용할 수 있습니다.");
         return '';
     }
-    return targetUrl;
+    return cleanWebAppUrl(targetUrl);
 }
 
 function getSheetSyncToken() {
-    const token = localStorage.getItem('user_local_sheet_sync_token') || '';
+    const token = getStoredSheetSyncToken();
     if (token.length < 12) {
         alert('먼저 연결 정보의 시트 동기화 키를 12자 이상 입력하고 저장해 주세요.');
         return '';
@@ -49,26 +70,18 @@ function getSheetSyncToken() {
     return token;
 }
 
-function buildAuthorizedWebAppUrl(targetUrl, params = {}) {
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(targetUrl || '')) {
-        alert('허용되지 않은 시트 저장 주소입니다. Apps Script의 /exec 주소를 다시 저장해 주세요.');
-        return '';
-    }
-    const token = getSheetSyncToken();
-    if (!token) return '';
-    const url = new URL(targetUrl);
-    Object.entries({ ...params, token }).forEach(([key, value]) => url.searchParams.set(key, value));
-    return url.toString();
-}
-
 function postWebAppData(targetUrl, payload) {
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(targetUrl || '')) {
+    const safeUrl = cleanWebAppUrl(targetUrl);
+    if (!safeUrl) {
         return Promise.reject(new Error('허용되지 않은 시트 저장 주소입니다.'));
     }
     const token = getSheetSyncToken();
     if (!token) return Promise.reject(new Error('시트 동기화 키가 없습니다.'));
-    return fetch(targetUrl, {
+    return fetch(safeUrl, {
         method: "POST",
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        cache: 'no-store',
         headers: { "Content-Type": "text/plain" },
         body: JSON.stringify({ ...payload, token })
     }).then(response => {
@@ -259,6 +272,8 @@ function getComparableGameRecords(events) {
             title: String(game.title || event.title || ''), startDate: String(game.startDate || ''), endDate: String(game.endDate || ''),
             platform: String(game.platform || ''), time: Number(game.time || 0), isEnding: String(game.isEnding || 'x'),
             memo: String(game.memo || ''), review: String(game.review || ''), steamAppId: String(game.steamAppId || ''),
+            parentAppId: String(game.parentAppId || ''), isLauncherAllocation: Boolean(game.isLauncherAllocation),
+            launcherChildAppId: String(game.launcherChildAppId || ''), calendarLinkStart: String(game.calendarLinkStart || ''),
             steamTotal: game.steamTotal === null || game.steamTotal === '' || game.steamTotal === undefined ? null : Number(game.steamTotal)
         };
     }).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
@@ -510,51 +525,38 @@ window.handleGameRecordsResponse = function(payload) {
     return result;
 };
 
-function fetchAllYearTabsForInitialSync(webAppUrl) {
-    return new Promise((resolve, reject) => {
-        const callbackName = `gameEffectInitialSheetCallback${Date.now()}`;
-        const script = document.createElement('script');
-        const cleanup = () => {
-            script.remove();
-            delete window[callbackName];
-        };
-        window[callbackName] = payload => {
-            try {
-                const records = parseGameRecordsPayload(payload);
-                cleanup();
-                if (!records) throw new Error(payload?.message || '시트 기록을 읽지 못했습니다.');
-                resolve(records);
-            } catch (error) {
-                cleanup();
-                reject(error);
-            }
-        };
-        const authorizedUrl = buildAuthorizedWebAppUrl(webAppUrl, { action: 'gameRecords', callback: callbackName });
-        if (!authorizedUrl) { cleanup(); reject(new Error('시트 동기화 키를 먼저 저장해 주세요.')); return; }
-        script.src = authorizedUrl;
-        script.onerror = () => {
-            cleanup();
-            reject(new Error('시트를 불러오지 못했습니다. Apps Script를 새 코드로 배포했는지 확인해 주세요.'));
-        };
-        document.body.appendChild(script);
+async function requestSheetRecords(webAppUrl) {
+    const safeUrl = cleanWebAppUrl(webAppUrl);
+    if (!safeUrl) throw new Error('허용되지 않은 시트 저장 주소입니다.');
+    // 구버전 doPost는 알 수 없는 요청을 빈 행으로 저장하므로 읽기 지원을 먼저 확인합니다.
+    const response = await fetch(`${safeUrl}?action=capabilities`, {
+        credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store'
     });
+    if (!response.ok) throw new Error(`시트 연결 확인 실패: HTTP ${response.status}`);
+    const capabilities = await response.json();
+    if (capabilities?.features?.postGameRecords !== true) {
+        throw new Error('연결 도움말의 최신 Apps Script 전체 코드로 교체하고 새 버전으로 배포해 주세요.');
+    }
+    const payload = await postWebAppData(safeUrl, { action: 'gameRecords' });
+    if (payload?.result !== 'success') throw new Error(payload?.message || '시트 기록을 읽지 못했습니다.');
+    return payload;
 }
 
-function fetchAllYearTabs(webAppUrl) {
-    let oldScript = document.getElementById('game-records-jsonp-script');
-    if (oldScript) oldScript.remove();
-    let script = document.createElement('script');
-    script.id = 'game-records-jsonp-script';
-    const authorizedUrl = buildAuthorizedWebAppUrl(webAppUrl, { action: 'gameRecords', callback: 'handleGameRecordsResponse' });
-    if (!authorizedUrl) return false;
-    script.src = authorizedUrl;
-    script.onerror = () => {
-        script.remove();
+async function fetchAllYearTabsForInitialSync(webAppUrl) {
+    const payload = await requestSheetRecords(webAppUrl);
+    const records = parseGameRecordsPayload(payload);
+    if (!records) throw new Error('시트 기록을 읽지 못했습니다.');
+    return records;
+}
+
+async function fetchAllYearTabs(webAppUrl) {
+    try {
+        const payload = await requestSheetRecords(webAppUrl);
+        handleGameRecordsResponse(payload);
+    } catch (error) {
         endWorkProgress();
-        alert('시트를 불러오지 못했습니다. Apps Script 코드를 새 코드로 바꾼 뒤 새 배포했는지 확인해 주세요.');
-    };
-    document.body.appendChild(script);
-    return true;
+        alert(`시트를 불러오지 못했습니다. 기존 기록은 유지됩니다. ${error.message}`);
+    }
 }
 
 function forceFetchSpreadsheetData() {
@@ -571,7 +573,7 @@ function forceFetchSpreadsheetData() {
 
     let webAppUrl = localStorage.getItem('user_local_web_app_url');
     if (webAppUrl) {
-        if (!fetchAllYearTabs(webAppUrl)) endWorkProgress();
+        fetchAllYearTabs(webAppUrl);
         return;
     }
 

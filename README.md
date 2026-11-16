@@ -13,6 +13,7 @@
 - 구글 시트에서 모든 연도 기록 가져오기
 - CSV 또는 시작일 연도별 탭 Excel 파일(.xlsx) 저장하기
 - 잘못되거나 똑같이 겹친 기록 정리하기
+- 웹과 별도로 실행하는 [로컬 데이터 업데이트 도구](desktop-updater/README.md): 현재 쓰는 데이터의 사본을 대상 사이트 버전의 형식으로 변환
 
 ## 처음 사용하기
 
@@ -36,7 +37,11 @@
 
 로컬 기록과 시트 기록이 다를 때 기록을 불러오면, 시트 데이터로 로컬 기록을 교체할지 현재 로컬 기록을 유지할지 선택할 수 있습니다.
 
-기록을 수정·삭제하거나 Steam 제목을 변환하면 현재 브라우저의 전체 기록이 연도별 시트에 다시 저장됩니다. 시트를 사용하는 첫 연결이라면 먼저 **시트 기록 불러오기**로 시트 데이터를 확인하고, 중요한 시트는 사본을 만들어 두세요. Steam만 사용하는 경우에는 시트 연결이 필요하지 않습니다.
+기록 추가·수정·삭제는 해당 기록 ID의 행에만 반영합니다. 시작 연도가 바뀌면 새 연도에 저장한 뒤 같은 ID의 이전 행을 정리합니다. 저장 후에는 게임 정리 탭을 갱신합니다. 중요한 시트는 처음 연결하기 전 사본을 만들어 두세요. Steam만 사용하는 경우에는 시트 연결이 필요하지 않습니다.
+
+v2.74부터 시트 키는 URL에 넣지 않고 POST 본문으로 보냅니다. 기존 사용자는 아래 Apps Script 전체 코드로 교체한 뒤 **배포 관리 → 수정 → 새 버전**으로 배포해야 기록을 불러올 수 있습니다. `GAME_EFFECT_SYNC_TOKEN` 스크립트 속성은 기존 값을 유지합니다. **이 기기에서 동기화 키 기억**을 끄고 연결 정보를 저장하면 키를 현재 탭에만 보관합니다. 이 기능은 키를 암호화하지 않습니다.
+
+GitHub 웹 업로드는 `.gitignore`를 적용하지 않습니다. `.local-only`, `outputs`, `_tools`, 엑셀·CSV와 실제 `.env` 파일을 직접 선택해 올리지 마세요. `.vercelignore`는 배포 제외에만 적용됩니다.
 
 **처음 데이터 불러오기**는 시트 주소 또는 SteamID64 중 하나만 설정해도 해당 데이터만 불러올 수 있습니다. 시트만 불러올 때는 공개 시트 주소만 있으면 되고, Steam만 불러올 때는 기존 Steam 기록의 AppID와 상점 제목을 먼저 안전하게 연결한 뒤 최근 플레이 정보를 반영합니다. 둘 다 입력했을 때만 Apps Script의 `/exec` 저장 주소도 필요하며, 시트와 Steam 라이브러리를 함께 불러온 뒤 Steam AppID 연결과 상점 한국어 제목 통일을 먼저 끝낸 다음 기록을 입력하고 최신 플레이 정보를 비교합니다. AppID를 확인하지 못한 기존 Steam 기록은 중복 생성을 막기 위해 이번 Steam 반영에서 제외하고, AppID가 연결된 게임은 계속 반영합니다. 완료 후에는 자동 연결 재시도·제목 정리 후보 보기·마침 중 다음 작업을 고를 수 있습니다.
 
@@ -63,7 +68,9 @@
 3. 저장 버튼을 누릅니다.
 
 ```javascript
-const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일'];
+const HEADERS = ['이름', '시작일', '종료일', '플랫폼', '시간', '엔딩여부', '메모', '한줄평', 'Steam AppID', 'Steam 누적시간', '기록 ID', '플레이시간(분)', '런처 부모 AppID', '런처 배분 기록', '달력 연결 시작일', '하위 게임 Steam AppID'];
+const SUMMARY_SHEET_NAME = '게임 정리';
+const SUMMARY_HEADERS = ['게임', '첫 기록일', '마지막 기록일', '엔딩 여부', '플레이타임', '한줄평', '플랫폼', '비고'];
 const SYNC_TOKEN = PropertiesService.getScriptProperties().getProperty('GAME_EFFECT_SYNC_TOKEN');
 
 function requireToken(token) {
@@ -71,28 +78,46 @@ function requireToken(token) {
 }
 
 function doPost(e) {
+  let lock;
   try {
     const data = JSON.parse(e.postData.contents);
     requireToken(data.token);
-    if (data.action === 'createTemplate') {
-      getYearSheet(new Date().getFullYear());
-      return json({ result: 'success' });
+
+    if (data.action === 'gameRecords') {
+      return output({ result: 'success', records: getAllRecords() });
     }
+    lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    if (data.action === 'createTemplate') {
+      const sheet = getYearSheet(new Date().getFullYear());
+      return output({ result: 'success' });
+    }
+
     if (data.action === 'upsertRecords') {
       const records = Array.isArray(data.records) ? data.records : [];
       upsertRecords(records);
-      return json({ result: 'success', count: records.length });
+      refreshGameSummary();
+      return output({ result: 'success', count: records.length });
     }
+
     if (data.action === 'deleteRecords') {
       const recordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
-      return json({ result: 'success', deletedCount: deleteRecords(recordIds) });
+      const deletedCount = deleteRecords(recordIds);
+      refreshGameSummary();
+      return output({ result: 'success', deletedCount });
     }
-    const sheet = getYearSheet(getYear(data.startDate));
-    sheet.appendRow(toRow(data));
 
-    return json({ result: 'success' });
+    if (data.action === 'refreshGameSummary') {
+      refreshGameSummary();
+      return output({ result: 'success' });
+    }
+
+    throw new Error('지원하지 않는 요청입니다. 최신 사이트에서 다시 실행해 주세요.');
   } catch (error) {
-    return json({ result: 'error', message: String(error) });
+    return output({ result: 'error', message: String(error) });
+  } finally {
+    if (lock && lock.hasLock()) lock.releaseLock();
   }
 }
 
@@ -112,10 +137,11 @@ function getYearSheet(year) {
 }
 
 function toRow(data) {
-  return [data.title || '', data.startDate || '', data.endDate || '', data.platform || '', Number(data.time || 0), data.isEnding || 'x', data.memo || '', data.review || '', data.steamAppId || '', data.steamTotal ?? '', data.recordId || '', Number(data.playtimeMinutes || Math.round(Number(data.time || 0) * 60)), data.parentAppId || '', data.isLauncherAllocation ? 'Y' : '', data.calendarLinkStart || ''];
+  return [data.title || '', data.startDate || '', data.endDate || '', data.platform || '', Number(data.time || 0), data.isEnding || 'x', data.memo || '', data.review || '', data.steamAppId || '', data.steamTotal ?? '', data.recordId || '', Number(data.playtimeMinutes || Math.round(Number(data.time || 0) * 60)), data.parentAppId || '', data.isLauncherAllocation ? 'Y' : '', data.calendarLinkStart || '', data.launcherChildAppId || ''];
 }
 
 function upsertRecords(records) {
+  const savedLocations = new Map();
   const byYear = {};
   records.forEach(record => {
     const year = getYear(record.startDate);
@@ -136,7 +162,24 @@ function upsertRecords(records) {
       const rowNumber = idToRow.get(String(record.recordId || '')) || legacyToRow.get(legacyKeyFromRecord(record));
       if (rowNumber) sheet.getRange(rowNumber, 1, 1, HEADERS.length).setValues([row]);
       else sheet.appendRow(row);
+      const savedRow = rowNumber || sheet.getLastRow();
+      if (record.recordId) {
+        idToRow.set(String(record.recordId), savedRow);
+        savedLocations.set(String(record.recordId), { sheet: sheet.getName(), row: savedRow });
+      }
     });
+  });
+  // 새 위치 저장이 모두 성공한 다음, 같은 ID의 이전 연도·중복 행만 정리합니다.
+  SpreadsheetApp.getActiveSpreadsheet().getSheets().filter(sheet => /^\d{4}$/.test(sheet.getName())).forEach(sheet => {
+    const values = sheet.getDataRange().getValues();
+    const idColumn = (values[0] || []).map(String).indexOf('기록 ID');
+    if (idColumn < 0) return;
+    const duplicateRows = [];
+    values.slice(1).forEach((row, index) => {
+      const saved = savedLocations.get(String(row[idColumn] || ''));
+      if (saved && (saved.sheet !== sheet.getName() || saved.row !== index + 2)) duplicateRows.push(index + 2);
+    });
+    duplicateRows.sort((a, b) => b - a).forEach(row => sheet.deleteRow(row));
   });
 }
 
@@ -161,14 +204,99 @@ function deleteRecords(recordIds) {
   });
   return deletedCount;
 }
-function legacyKeyFromRow(row) { return [row[0], row[1], row[2], row[3], row[4], row[8], row[9]].map(value => String(value ?? '')).join('\u001F'); }
-function legacyKeyFromRecord(record) { return [record.title, record.startDate, record.endDate, record.platform, Number(record.time || 0), record.steamAppId, record.steamTotal ?? ''].map(value => String(value ?? '')).join('\u001F'); }
+
+// 연도별 원본 기록은 건드리지 않고, 보기 편한 "게임 정리" 탭만 새로 만듭니다.
+// Steam 통합 런처의 하위 게임은 같은 런처 AppID라도 제목별로 따로 집계합니다.
+function refreshGameSummary() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const yearSheets = spreadsheet.getSheets().filter(sheet => /^\d{4}$/.test(sheet.getName()));
+  const groups = new Map();
+
+  yearSheets.forEach(sheet => {
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return;
+    const headers = values[0].map(String);
+    const column = name => headers.indexOf(name);
+    const cell = (row, name) => {
+      const index = column(name);
+      const value = index > -1 ? row[index] : '';
+      return value instanceof Date ? Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(value ?? '').trim();
+    };
+
+    values.slice(1).forEach(row => {
+      const title = cell(row, '이름');
+      if (!title) return;
+      const platform = cell(row, '플랫폼');
+      const steamAppId = cell(row, 'Steam AppID');
+      const parentAppId = cell(row, '런처 부모 AppID');
+      const isLauncherAllocation = cell(row, '런처 배분 기록').toUpperCase() === 'Y';
+      const platformKey = platform.toLocaleLowerCase();
+      const identity = steamAppId
+        ? ((isLauncherAllocation || parentAppId)
+          ? `steam-launcher:${steamAppId}\u001F${title.toLocaleLowerCase()}\u001F${platformKey}`
+          : `steam:${steamAppId}\u001F${platformKey}`)
+        : `manual:${title.toLocaleLowerCase()}\u001F${platformKey}`;
+      const startDate = cell(row, '시작일');
+      const endDate = cell(row, '종료일') || startDate;
+      const endingStatus = cell(row, '엔딩여부');
+      const review = cell(row, '한줄평');
+      const time = Number(cell(row, '시간')) || 0;
+      const group = groups.get(identity) || {
+        title, firstStart: startDate, lastEnd: endDate, totalTime: 0,
+        platforms: new Set(), notes: new Set(), endingDate: '', endingStatus: '', latestReview: '', latestReviewDate: ''
+      };
+      if (startDate && (!group.firstStart || startDate < group.firstStart)) group.firstStart = startDate;
+      if (endDate && (!group.lastEnd || endDate > group.lastEnd)) group.lastEnd = endDate;
+      group.totalTime += time;
+      if (platform) group.platforms.add(platform);
+      if (isLauncherAllocation || parentAppId) group.notes.add('통합 런처 하위 게임');
+      if (endingStatus && endingStatus !== 'x') {
+        const endingDate = endDate || startDate;
+        if (!group.endingDate || endingDate >= group.endingDate) {
+          group.endingDate = endingDate;
+          group.endingStatus = endingStatus;
+        }
+      }
+      if (review && (!group.latestReviewDate || endDate >= group.latestReviewDate)) {
+        group.latestReview = review;
+        group.latestReviewDate = endDate;
+      }
+      groups.set(identity, group);
+    });
+  });
+
+  const rows = [...groups.values()]
+    .sort((left, right) => right.lastEnd.localeCompare(left.lastEnd) || left.title.localeCompare(right.title, 'ko'))
+    .map(group => [
+      group.title,
+      group.firstStart,
+      group.lastEnd,
+      group.endingDate ? `${group.endingStatus === 'o' ? '엔딩' : group.endingStatus} · ${group.endingDate}` : '미완료',
+      Number(group.totalTime.toFixed(1)),
+      group.latestReview,
+      [...group.platforms].join(', '),
+      [...group.notes].join(' · ')
+    ]);
+  const summary = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME) || spreadsheet.insertSheet(SUMMARY_SHEET_NAME);
+  summary.clearContents();
+  summary.getRange(1, 1, 1, SUMMARY_HEADERS.length).setValues([SUMMARY_HEADERS]);
+  if (rows.length) summary.getRange(2, 1, rows.length, SUMMARY_HEADERS.length).setValues(rows);
+  summary.setFrozenRows(1);
+  summary.getRange(1, 1, 1, SUMMARY_HEADERS.length).setFontWeight('bold').setBackground('#dbeafe');
+  [28, 14, 14, 20, 14, 42, 20, 34].forEach((width, index) => summary.setColumnWidth(index + 1, width * 7));
+}
+
+function legacyKeyFromRow(row) {
+  return [row[0], row[1], row[2], row[3], row[4], row[8], row[9]].map(value => String(value ?? '')).join('\u001F');
+}
+function legacyKeyFromRecord(record) {
+  return [record.title, record.startDate, record.endDate, record.platform, Number(record.time || 0), record.steamAppId, record.steamTotal ?? ''].map(value => String(value ?? '')).join('\u001F');
+}
 
 function doGet(e) {
   const p = e.parameter || {};
-  if (!SYNC_TOKEN || String(p.token || '') !== SYNC_TOKEN) return jsonp({ result: 'error', message: '인증되지 않은 요청입니다.' }, p.callback);
-  if (p.action === 'gameRecords') return jsonp({ result: 'success', records: getAllRecords() }, p.callback);
-  return jsonp({ error: '잘못된 요청입니다.' }, p.callback);
+  if (p.action === 'capabilities') return output({ result: 'success', version: '2.74', features: { postGameRecords: true } });
+  return output({ result: 'error', message: '기록은 인증된 POST 요청으로만 읽을 수 있습니다.' });
 }
 
 function getAllRecords() {
@@ -181,32 +309,23 @@ function getAllRecords() {
     const values = sheet.getDataRange().getValues();
     if (values.length < 2) return;
     const headers = values[0].map(String);
+    const column = name => headers.indexOf(name);
     const value = (row, name) => {
-      const index = headers.indexOf(name);
+      const index = column(name);
       const item = index > -1 ? row[index] : '';
       return item instanceof Date ? Utilities.formatDate(item, Session.getScriptTimeZone(), 'yyyy-MM-dd') : item;
     };
     values.slice(1).forEach(row => records.push({
       recordId: value(row, '기록 ID'), title: value(row, '이름'), startDate: value(row, '시작일'), endDate: value(row, '종료일'),
       platform: value(row, '플랫폼'), time: value(row, '시간'), isEnding: value(row, '엔딩여부'),
-      memo: value(row, '메모'), review: value(row, '한줄평'), steamAppId: value(row, 'Steam AppID'), steamTotal: value(row, 'Steam 누적시간'), playtimeMinutes: value(row, '플레이시간(분)'), parentAppId: value(row, '런처 부모 AppID'), isLauncherAllocation: value(row, '런처 배분 기록') === 'Y', calendarLinkStart: value(row, '달력 연결 시작일')
+      memo: value(row, '메모'), review: value(row, '한줄평'), steamAppId: value(row, 'Steam AppID'), steamTotal: value(row, 'Steam 누적시간'), playtimeMinutes: value(row, '플레이시간(분)'), parentAppId: value(row, '런처 부모 AppID'), isLauncherAllocation: value(row, '런처 배분 기록') === 'Y', calendarLinkStart: value(row, '달력 연결 시작일'), launcherChildAppId: value(row, '하위 게임 Steam AppID')
     }));
   });
   return records;
 }
 
-function json(data) {
-  return ContentService.createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function jsonp(data, callback) {
-  const text = JSON.stringify(data);
-  if (callback && /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(callback)) {
-    return ContentService.createTextOutput(callback + '(' + text + ');')
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return json(data);
+function output(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }
 ```
 

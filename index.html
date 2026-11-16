@@ -6,14 +6,14 @@
     <title>Game Effect</title>
     
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js" integrity="sha384-5JIwZN3kuxX2zKsavvNmbZ3zhZZMUtu/eQiK3BbXukpSXp0Cd2ZP4OAYKx7mrPgI" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
     
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <h1>🎮 Game Effect <span class="app-version">v2.71</span></h1>
+    <h1>🎮 Game Effect <span class="app-version">v2.74</span></h1>
     <nav class="mobile-page-navigation" aria-label="모바일 화면 전환">
         <button type="button" class="mobile-page-nav-button is-active" data-mobile-page="calendar" aria-pressed="true">달력</button>
         <button type="button" class="mobile-page-nav-button" data-mobile-page="record" aria-pressed="false">기록하기</button>
@@ -34,6 +34,8 @@
                 <label><span>시트 동기화 키</span><input type="password" id="sheetSyncTokenInput" class="url-input-field" autocomplete="new-password" placeholder="Apps Script에 설정한 긴 비밀 키"></label>
                 <label><span>SteamID64</span><input type="text" id="steamIdInput" class="url-input-field" placeholder="17자리 숫자"></label>
             </div>
+            <label><input type="checkbox" id="rememberSheetSyncToken"> 이 기기에서 동기화 키 기억</label>
+            <p class="guide-note">체크하지 않으면 키는 현재 탭에만 보관됩니다. 이미 저장된 키는 기억 설정을 유지합니다. 설정을 바꾼 뒤 연결 정보를 저장해 주세요.</p>
         </section>
 
         <section class="connection-action-section">
@@ -94,9 +96,16 @@ function requireToken(token) {
 }
 
 function doPost(e) {
+  let lock;
   try {
     const data = JSON.parse(e.postData.contents);
     requireToken(data.token);
+
+    if (data.action === 'gameRecords') {
+      return output({ result: 'success', records: getAllRecords() });
+    }
+    lock = LockService.getScriptLock();
+    lock.waitLock(30000);
 
     if (data.action === 'createTemplate') {
       const sheet = getYearSheet(new Date().getFullYear());
@@ -122,11 +131,11 @@ function doPost(e) {
       return output({ result: 'success' });
     }
 
-    const sheet = getYearSheet(getYear(data.startDate));
-    sheet.appendRow(toRow(data));
-    return output({ result: 'success' });
+    throw new Error('지원하지 않는 요청입니다. 최신 사이트에서 다시 실행해 주세요.');
   } catch (error) {
     return output({ result: 'error', message: String(error) });
+  } finally {
+    if (lock &amp;&amp; lock.hasLock()) lock.releaseLock();
   }
 }
 
@@ -150,6 +159,7 @@ function toRow(data) {
 }
 
 function upsertRecords(records) {
+  const savedLocations = new Map();
   const byYear = {};
   records.forEach(record => {
     const year = getYear(record.startDate);
@@ -170,7 +180,24 @@ function upsertRecords(records) {
       const rowNumber = idToRow.get(String(record.recordId || '')) || legacyToRow.get(legacyKeyFromRecord(record));
       if (rowNumber) sheet.getRange(rowNumber, 1, 1, HEADERS.length).setValues([row]);
       else sheet.appendRow(row);
+      const savedRow = rowNumber || sheet.getLastRow();
+      if (record.recordId) {
+        idToRow.set(String(record.recordId), savedRow);
+        savedLocations.set(String(record.recordId), { sheet: sheet.getName(), row: savedRow });
+      }
     });
+  });
+  // 새 위치 저장이 모두 성공한 다음, 같은 ID의 이전 연도·중복 행만 정리합니다.
+  SpreadsheetApp.getActiveSpreadsheet().getSheets().filter(sheet => /^\d{4}$/.test(sheet.getName())).forEach(sheet => {
+    const values = sheet.getDataRange().getValues();
+    const idColumn = (values[0] || []).map(String).indexOf('기록 ID');
+    if (idColumn &lt; 0) return;
+    const duplicateRows = [];
+    values.slice(1).forEach((row, index) => {
+      const saved = savedLocations.get(String(row[idColumn] || ''));
+      if (saved &amp;&amp; (saved.sheet !== sheet.getName() || saved.row !== index + 2)) duplicateRows.push(index + 2);
+    });
+    duplicateRows.sort((a, b) => b - a).forEach(row => sheet.deleteRow(row));
   });
 }
 
@@ -286,9 +313,8 @@ function legacyKeyFromRecord(record) {
 
 function doGet(e) {
   const p = e.parameter || {};
-  if (!SYNC_TOKEN || String(p.token || '') !== SYNC_TOKEN) return jsonp({ result: 'error', message: '인증되지 않은 요청입니다.' }, p.callback);
-  if (p.action === 'gameRecords') return jsonp({ result: 'success', records: getAllRecords() }, p.callback);
-  return jsonp({ error: '잘못된 요청입니다.' }, p.callback);
+  if (p.action === 'capabilities') return output({ result: 'success', version: '2.74', features: { postGameRecords: true } });
+  return output({ result: 'error', message: '기록은 인증된 POST 요청으로만 읽을 수 있습니다.' });
 }
 
 function getAllRecords() {
@@ -314,15 +340,6 @@ function getAllRecords() {
     }));
   });
   return records;
-}
-
-function jsonp(data, callback) {
-  const text = JSON.stringify(data);
-  if (callback &amp;&amp; /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(callback)) {
-    return ContentService.createTextOutput(callback + '(' + text + ')')
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return output(data);
 }
 
 function output(data) {

@@ -192,9 +192,13 @@ function saveConnectionSettings() {
     const steamId = document.getElementById('steamIdInput')?.value.trim() || '';
     const saved = [];
 
-    if (sheetUrl) {
-        localStorage.setItem('saved_game_sheet_url', sheetUrl);
-        saved.push('스프레드시트 주소');
+    if (sheetUrl && !isValidSpreadsheetUrl(sheetUrl)) {
+        alert('올바른 구글 스프레드시트 주소를 입력해 주세요.');
+        return;
+    }
+    if (steamId && !/^\d{17}$/.test(steamId)) {
+        alert('SteamID64는 17자리 숫자로 입력해 주세요.');
+        return;
     }
     if (webAppUrl) {
         if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec(?:\?.*)?$/.test(webAppUrl)) {
@@ -205,15 +209,17 @@ function saveConnectionSettings() {
             alert('시트 동기화 키는 12자 이상으로 입력해 주세요.');
             return;
         }
-        localStorage.setItem('user_local_web_app_url', webAppUrl);
-        localStorage.setItem('user_local_sheet_sync_token', sheetSyncToken);
+        const safeUrl = cleanWebAppUrl(webAppUrl);
+        localStorage.setItem('user_local_web_app_url', safeUrl);
+        document.getElementById('webAppUrlInput').value = safeUrl;
+        storeSheetSyncToken(sheetSyncToken);
         saved.push('시트 저장 주소');
     }
+    if (sheetUrl) {
+        localStorage.setItem('saved_game_sheet_url', sheetUrl);
+        saved.push('스프레드시트 주소');
+    }
     if (steamId) {
-        if (!/^\d{17}$/.test(steamId)) {
-            alert('SteamID64는 17자리 숫자로 입력해 주세요.');
-            return;
-        }
         localStorage.setItem('user_steam_id', steamId);
         localStorage.removeItem('user_steam_api_key');
         saved.push('SteamID64');
@@ -232,7 +238,7 @@ function getConnectionTransferData() {
     return {
         version: 1,
         spreadsheetUrl: fieldValue('spreadsheetUrlInput') || localStorage.getItem('saved_game_sheet_url') || '',
-        webAppUrl: fieldValue('webAppUrlInput') || localStorage.getItem('user_local_web_app_url') || '',
+        webAppUrl: cleanWebAppUrl(fieldValue('webAppUrlInput') || localStorage.getItem('user_local_web_app_url') || ''),
         steamId: fieldValue('steamIdInput') || localStorage.getItem('user_steam_id') || ''
     };
 }
@@ -282,7 +288,7 @@ function applyConnectionTransferText(text) {
     }
 
     document.getElementById('spreadsheetUrlInput').value = spreadsheetUrl;
-    document.getElementById('webAppUrlInput').value = webAppUrl;
+    document.getElementById('webAppUrlInput').value = cleanWebAppUrl(webAppUrl);
     document.getElementById('steamIdInput').value = steamId;
     // 동기화 키는 의도적으로 비워 둡니다. 새 환경에서 직접 입력해야 합니다.
     document.getElementById('sheetSyncTokenInput').value = '';
@@ -675,6 +681,25 @@ function getSteamAchievementProgress(steamId, steamAppId) {
     return steamAchievementCache.get(cacheKey);
 }
 
+function getCalendarHoverTotalPlayTime(game) {
+    const fallback = Number(game.totalPlayTime ?? game.steamTotal ?? game.time ?? 0);
+    if (!game.parentAppId && !game.isLauncherAllocation) return fallback;
+
+    const launcherAppId = String(game.parentAppId || game.steamAppId || '').trim();
+    if (!launcherAppId) return fallback;
+    // 누적시간은 하위 게임별 마지막 값이 아니라, 같은 런처 전체의 최신 누적값을 사용한다.
+    // 기록 날짜를 나중에 편집해도 과거 누적값으로 돌아가지 않도록 가장 큰 값을 선택한다.
+    const totals = localEvents.flatMap(event => {
+        const record = event.extendedProps || {};
+        const recordLauncherAppId = String(record.parentAppId || record.steamAppId || '').trim();
+        if (recordLauncherAppId !== launcherAppId || record.steamTotal === null
+            || record.steamTotal === undefined || record.steamTotal === '') return [];
+        const total = Number(record.steamTotal);
+        return Number.isFinite(total) && total >= 0 ? [total] : [];
+    });
+    return totals.length ? Math.max(...totals) : fallback;
+}
+
 function showCalendarHoverCard(info) {
     const game = info.event.extendedProps;
     const steamAppId = String(game.steamAppId || '').trim();
@@ -700,7 +725,7 @@ function showCalendarHoverCard(info) {
     const title = document.createElement('strong');
     title.textContent = info.event.title;
     const playtime = document.createElement('span');
-    playtime.textContent = `누적 플레이시간: ${Number(game.totalPlayTime ?? game.steamTotal ?? game.time ?? 0).toFixed(1)}시간`;
+    playtime.textContent = `누적 플레이시간: ${getCalendarHoverTotalPlayTime(game).toFixed(1)}시간`;
     const achievement = document.createElement('span');
     achievement.className = 'calendar-hover-achievement';
     card.append(title, playtime);
@@ -1591,7 +1616,9 @@ function openDetailModalById(id, options = {}) {
     document.getElementById('modalInfoGrid').style.display = 'grid';
     const modeNotice = document.getElementById('modalDetailModeNotice');
     modeNotice.style.display = showAllRecords ? 'block' : 'none';
-    modeNotice.textContent = showAllRecords ? `모든 기록 ${sameGames.length}개를 합친 게임 전체 정보입니다.` : '';
+    modeNotice.textContent = showAllRecords ? `모든 기록 ${sameGames.length}개를 합친 정보입니다. 수정·삭제는 마지막 기록(${gameObj.startDate} ~ ${gameObj.endDate || gameObj.startDate}, ${Number(gameObj.time || 0).toFixed(1)}h)에 적용됩니다. 한줄평은 같은 게임의 모든 기록에 적용됩니다.` : '';
+    document.getElementById('btnEdit').textContent = showAllRecords ? '마지막 기록 수정' : '수정';
+    document.getElementById('btnDelete').textContent = showAllRecords ? '마지막 기록 삭제' : '삭제';
     document.getElementById('modalGameTitle').innerHTML = showAllRecords ? `${escapeHtml(gameObj.title)} <small>모든 기록</small>` : escapeHtml(gameObj.title);
     document.getElementById('modalGameTimeLabel').textContent = showAllRecords ? '⏱️ 전체 누적 플레이타임' : '⏱️ 플레이타임';
     document.getElementById('modalGameStartLabel').textContent = showAllRecords ? '📅 처음 기록한 날' : '📅 시작한 날';
@@ -1615,9 +1642,13 @@ function openDetailModalById(id, options = {}) {
     let reviewBox = document.getElementById('modalGameReviewBox');
     reviewBox.innerText = commonReview ? commonReview : "";
     reviewBox.contentEditable = "true";
+    let savedReviewText = commonReview.trim();
     reviewBox.onblur = function() {
         let updatedReviewText = this.innerText.trim();
-        const changedReviewRecords = getSameGameEvents(gameObj);
+        if (updatedReviewText === savedReviewText) return;
+        savedReviewText = updatedReviewText;
+        const changedReviewRecords = getSameGameEvents(gameObj).filter(evt => String(evt.extendedProps.review || '').trim() !== updatedReviewText);
+        if (!changedReviewRecords.length) return;
         changedReviewRecords.forEach(evt => { evt.extendedProps.review = updatedReviewText; });
         saveToLocalStorage();
         syncChangedRecordsSafely(changedReviewRecords, { actionLabel: '게임 한줄평 수정' });
@@ -1711,6 +1742,7 @@ function submitInstantMemo() {
 }
 
 function enableEditMode() {
+    if (isAllRecordsDetailMode) openDetailModalById(currentSelectedEventId);
     let target = localEvents.find(e => e.id === currentSelectedEventId); let gameObj = target.extendedProps;
     document.getElementById('quickMemoZone').style.display = 'none';
     document.getElementById('btnSteamLink').style.display = 'none';
@@ -1738,7 +1770,10 @@ function enableEditMode() {
     document.getElementById('btnEdit').style.display = 'none'; document.getElementById('btnSave').style.display = 'inline-block';
 }
 
-function saveEditedData() {
+let isSavingEditedData = false;
+
+async function saveEditedData() {
+    if (isSavingEditedData) return;
     let target = localEvents.find(e => e.id === currentSelectedEventId); if (!target) return;
     let newTitle = document.getElementById('editTitle').value.trim(); let newTime = parseFloat(document.getElementById('editTime').value || 0);
     let newStart = isAllRecordsDetailMode ? target.extendedProps.startDate : getValidatedDate(document.getElementById('editStart').value);
@@ -1785,15 +1820,32 @@ function saveEditedData() {
     target.backgroundColor = determineEventColor(target.extendedProps);
     
     saveToLocalStorage();
-    syncChangedRecordsSafely([target], { actionLabel: '게임 기록 수정' });
-    alert("저장되었습니다."); 
-    closeGameModal();
+    const submittedId = target.id;
+    const saveButton = document.getElementById('btnSave');
+    isSavingEditedData = true;
+    saveButton.disabled = true;
+    saveButton.textContent = '저장 중…';
+    try {
+        const result = await syncChangedRecordsSafely([{ ...target, extendedProps: { ...target.extendedProps } }], { actionLabel: '게임 기록 수정', silent: true });
+        if (result?.result === 'success') alert('브라우저와 구글 시트에 저장했습니다.');
+        else if (result?.error || result?.cancelled || localStorage.getItem('user_local_web_app_url')) {
+            alert(`이 브라우저에 저장했습니다. 구글 시트에는 반영되지 않았습니다.${result?.error?.message ? '\n' + result.error.message : ''}\n연결을 확인한 뒤 시트 수동 동기화를 실행해 주세요.`);
+        } else alert('이 브라우저에 저장했습니다.');
+        if (currentSelectedEventId === submittedId) closeGameModal();
+    } catch (error) {
+        alert(`이 브라우저에 저장했습니다. 구글 시트 저장 실패: ${error.message}\n연결을 확인한 뒤 시트 수동 동기화를 실행해 주세요.`);
+    } finally {
+        isSavingEditedData = false;
+        saveButton.disabled = false;
+        saveButton.textContent = '저장';
+    }
 }
 
 async function deleteCurrentGame() { 
-    if (!confirm("삭제하시겠습니까?")) return;
     const deleted = localEvents.find(e => e.id === currentSelectedEventId);
     if (!deleted) return;
+    const props = deleted.extendedProps;
+    if (!confirm(`${deleted.title}\n${props.startDate} ~ ${props.endDate || props.startDate} · ${Number(props.time || 0).toFixed(1)}h\n\n이 기록 1개를 삭제할까요?`)) return;
 
     const recordId = String(deleted.extendedProps.recordId || deleted.id || '');
     if (recordId && typeof deleteRecordsFromGoogleSheet === 'function') {
@@ -1802,9 +1854,9 @@ async function deleteCurrentGame() {
     }
 
     recordEditHistory('기록 삭제', deleted.title || '이름 없음', localEvents, [`시작 날짜: ${deleted.extendedProps.startDate}`, `플랫폼: ${deleted.extendedProps.platform}`]);
-    localEvents = localEvents.filter(e => e.id !== currentSelectedEventId);
+    localEvents = localEvents.filter(e => e.id !== deleted.id);
     saveToLocalStorage();
-    closeGameModal();
+    if (currentSelectedEventId === deleted.id) closeGameModal();
 }
 
 function closeGameModal() { setModalVisibility(document.getElementById('gameModal'), false); if (currentSelectedGameTitle) { refreshUI(); } }
@@ -1901,6 +1953,7 @@ function renderSteamLauncherSettings() {
             removeChild.textContent = '제거';
             removeChild.addEventListener('click', () => {
                 const updated = getSteamLauncherRegistry();
+                updated[launcherIndex].removedChildTitles.push(child.title.toLocaleLowerCase());
                 updated[launcherIndex].children.splice(childIndex, 1);
                 saveSteamLauncherRegistry(updated);
                 renderBetaSettings();
@@ -1927,12 +1980,14 @@ function renderSteamLauncherSettings() {
             if (!name) return alert('하위 게임 이름을 입력해 주세요.');
             if (storeAppId && !/^\d+$/.test(storeAppId)) return alert('상점 AppID는 숫자만 입력해 주세요.');
             const updated = getSteamLauncherRegistry();
+            updated[launcherIndex].removedChildTitles = updated[launcherIndex].removedChildTitles
+                .filter(title => title !== name.toLocaleLowerCase());
             const existingIndex = updated[launcherIndex].children.findIndex(child => child.title.toLocaleLowerCase() === name.toLocaleLowerCase());
             let child;
             if (existingIndex >= 0) {
                 const existing = updated[launcherIndex].children[existingIndex];
-                if (existing.appId || !storeAppId) return alert('같은 하위 게임이 이미 등록되어 있습니다.');
-                child = { ...existing, appId: storeAppId };
+                if (existing.appId && storeAppId && existing.appId !== storeAppId) return alert('이미 등록된 하위 게임의 상점 AppID와 다릅니다.');
+                child = { ...existing, appId: storeAppId || existing.appId };
                 updated[launcherIndex].children[existingIndex] = child;
             } else {
                 child = { title: name, appId: storeAppId };
@@ -1941,7 +1996,7 @@ function renderSteamLauncherSettings() {
             saveSteamLauncherRegistry(updated);
             const matchedCount = await classifyExistingRecordsForLauncherChild(updated[launcherIndex], child);
             renderBetaSettings();
-            if (matchedCount > 0) alert(`'${name}'과 같은 기존 런처 기록 ${matchedCount}개를 하위 게임으로 연결하고 시트에도 저장했습니다.`);
+            if (matchedCount > 0) alert(`'${name}'과 같은 기존 런처 기록 ${matchedCount}개를 하위 게임으로 연결했습니다.`);
         });
         addRow.append(childTitle, childAppId, addChild);
         item.append(head, childList, addRow);
@@ -2128,9 +2183,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (savedUrl) { document.getElementById('spreadsheetUrlInput').value = savedUrl; }
 
     let savedWebAppUrl = localStorage.getItem('user_local_web_app_url');
-    if (savedWebAppUrl) { document.getElementById('webAppUrlInput').value = savedWebAppUrl; }
+    if (savedWebAppUrl) { document.getElementById('webAppUrlInput').value = cleanWebAppUrl(savedWebAppUrl); }
 
-    const savedSheetSyncToken = localStorage.getItem('user_local_sheet_sync_token');
+    const savedSheetSyncToken = getStoredSheetSyncToken();
+    document.getElementById('rememberSheetSyncToken').checked = Boolean(localStorage.getItem('user_local_sheet_sync_token'));
     if (savedSheetSyncToken && document.getElementById('sheetSyncTokenInput')) {
         document.getElementById('sheetSyncTokenInput').value = savedSheetSyncToken;
     }

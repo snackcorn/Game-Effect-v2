@@ -64,11 +64,16 @@ function getSteamLastPlayedDateOrEmpty(lastPlayedTimestamp) {
 }
 
 function getLatestSteamTotalRecord(records) {
+    const isLauncher = records.some(isSteamLauncherRecord);
     return records
         .filter(record => record.extendedProps.steamTotal !== null
             && record.extendedProps.steamTotal !== ''
             && Number.isFinite(Number(record.extendedProps.steamTotal)))
         .sort((first, second) => {
+            if (isLauncher) {
+                const totalDifference = Number(first.extendedProps.steamTotal) - Number(second.extendedProps.steamTotal);
+                if (totalDifference) return totalDifference;
+            }
             const firstDate = first.extendedProps.startDate || '';
             const secondDate = second.extendedProps.startDate || '';
             return firstDate.localeCompare(secondDate) || first.id.localeCompare(second.id);
@@ -278,7 +283,7 @@ async function bulkLinkSteamGames(options = {}) {
     const button = document.getElementById('bulkSteamLinkButton');
     const steamRecords = localEvents.filter(event => String(event.extendedProps.platform || '').toLocaleLowerCase() === 'steam');
     const unlinkedTitles = [...new Set(steamRecords
-        .filter(event => !event.extendedProps.steamAppId)
+        .filter(event => !event.extendedProps.steamAppId && !isSteamLauncherRecord(event))
         .map(event => event.title)
         .filter(Boolean))];
 
@@ -337,7 +342,7 @@ async function normalizeIncomingSteamSheetRecords(records, ownedGames) {
     const groups = new Map();
     records.forEach(record => {
         const game = record.extendedProps || {};
-        if (String(game.platform || '').toLocaleLowerCase() !== 'steam') return;
+        if (String(game.platform || '').toLocaleLowerCase() !== 'steam' || isSteamLauncherRecord(record)) return;
         const key = String(record.title || game.title || '').trim();
         if (!key) return;
         if (!groups.has(key)) groups.set(key, []);
@@ -661,7 +666,7 @@ function rollbackSteamFirstSyncRecords() {
 async function normalizeExistingSteamTitles(options = {}) {
     const silent = Boolean(options.silent);
     const button = document.getElementById('normalizeSteamTitlesButton');
-    const steamRecords = localEvents.filter(event => String(event.extendedProps.platform || '').toLocaleLowerCase() === 'steam');
+    const steamRecords = localEvents.filter(event => String(event.extendedProps.platform || '').toLocaleLowerCase() === 'steam' && !isSteamLauncherRecord(event));
     if (steamRecords.length === 0) {
         if (!silent) alert('정리할 Steam 플랫폼 기록이 없습니다.');
         return { changedGames: 0, changedRecords: 0 };
@@ -842,6 +847,8 @@ function normalizeSteamLauncherRegistry(registry) {
     return (Array.isArray(registry) ? registry : []).map(launcher => ({
         title: String(launcher?.title || '').trim(),
         appId: String(launcher?.appId || '').trim(),
+        removedChildTitles: (Array.isArray(launcher?.removedChildTitles) ? launcher.removedChildTitles : [])
+            .map(title => String(title || '').trim().toLocaleLowerCase()).filter(Boolean),
         children: (Array.isArray(launcher?.children) ? launcher.children : []).map(child => ({
             title: String(child?.title || '').trim(),
             appId: String(child?.appId || '').trim()
@@ -862,6 +869,7 @@ function restoreRecordedLauncherChildren(registry) {
             const title = String(record.title || event.title || '').trim();
             if (!belongsToLauncher || !title || title.toLocaleLowerCase() === launcher.title.toLocaleLowerCase()) return;
             const key = title.toLocaleLowerCase();
+            if (launcher.removedChildTitles.includes(key)) return;
             const existing = childrenByTitle.get(key);
             const childAppId = String(record.launcherChildAppId || '').trim();
             if (!existing || (!existing.appId && childAppId)) {
@@ -890,6 +898,13 @@ function saveSteamLauncherRegistry(registry) {
     localStorage.setItem(STEAM_LAUNCHER_REGISTRY_STORAGE_KEY, JSON.stringify(normalizeSteamLauncherRegistry(registry)));
 }
 
+function isSteamLauncherRecord(event) {
+    const record = event?.extendedProps || event || {};
+    if (record.parentAppId || record.isLauncherAllocation) return true;
+    return getSteamLauncherRegistry().some(launcher =>
+        launcher.appId === String(record.steamAppId || '').trim());
+}
+
 function getSteamLauncherForGame(game) {
     const appId = String(game?.appid || '');
     return getSteamLauncherRegistry().find(launcher => launcher.appId === appId) || null;
@@ -905,15 +920,9 @@ function getSteamLauncherTitleMappings() {
 }
 
 function getSteamRecordedTotal(existingRecords) {
-    const recordsWithSteamTotal = existingRecords
-        .filter(record => record.extendedProps.steamTotal !== null && record.extendedProps.steamTotal !== '' && Number.isFinite(Number(record.extendedProps.steamTotal)))
-        .sort((first, second) => {
-            const firstDate = first.extendedProps.startDate || '';
-            const secondDate = second.extendedProps.startDate || '';
-            return firstDate.localeCompare(secondDate) || first.id.localeCompare(second.id);
-        });
-    const total = recordsWithSteamTotal.length
-        ? Number(recordsWithSteamTotal[recordsWithSteamTotal.length - 1].extendedProps.steamTotal)
+    const latestRecord = getLatestSteamTotalRecord(existingRecords);
+    const total = latestRecord
+        ? Number(latestRecord.extendedProps.steamTotal)
         : existingRecords.reduce((sum, record) => sum + getRecordMinutes(record) / 60, 0);
     return Number(Number(total || 0).toFixed(1));
 }
@@ -1207,6 +1216,7 @@ async function syncRecentSteamPlaytime(options = {}) {
         let skippedShortPlaytimeCount = 0;
         let skippedUnknownLastPlayedCount = 0;
         let skippedUnlinkedRecordCount = 0;
+        let skippedLauncherChoiceCount = 0;
         let lastPlayedRemainderCount = 0;
         let mergedRecordCount = 0;
         let separateRecordCount = 0;
@@ -1264,6 +1274,11 @@ async function syncRecentSteamPlaytime(options = {}) {
                 : existingRecords.reduce((sum, record) => sum + getRecordMinutes(record), 0);
             const diffMinutes = currentTotalSteamMinutes - recordedTotalMinutes;
             if (diffMinutes <= 0) continue;
+            if (getSteamLauncherForGame(game) && !launcherTitleByAppId.has(steamAppId)) {
+                // 자동 불러오기에서는 하위 게임을 임의로 정하지 않고 수동 동기화 때 선택한다.
+                skippedLauncherChoiceCount++;
+                continue;
+            }
             const isLargeDelta = diffMinutes > MAX_AUTOMATIC_STEAM_DELTA_MINUTES;
             if (isLargeDelta && !confirmLargeSteamDelta(game, diffMinutes)) continue;
             const diffHours = diffMinutes / 60;
@@ -1307,6 +1322,11 @@ async function syncRecentSteamPlaytime(options = {}) {
                 if (recordToExtend) {
                     setRecordMinutes(recordToExtend.extendedProps, getRecordMinutes(recordToExtend) + diffMinutes);
                     recordToExtend.extendedProps.steamTotal = currentTotalSteamHours;
+                    if (selectedLauncherTitle) {
+                        recordToExtend.extendedProps.parentAppId = steamAppId;
+                        recordToExtend.extendedProps.isLauncherAllocation = true;
+                        recordToExtend.extendedProps.launcherChildAppId = String(selectedLauncher?.appId || recordToExtend.extendedProps.launcherChildAppId || '');
+                    }
                     changedRecords.set(recordToExtend.id, recordToExtend.extendedProps);
                     mergedRecordCount++;
                 } else {
@@ -1369,7 +1389,8 @@ async function syncRecentSteamPlaytime(options = {}) {
         if (!silent && isFirstRecentSyncAfterUpdate) {
             alert('새 Steam 게임 자동 등록 기준 시각을 지금으로 설정했습니다. 다음 최근 플레이 동기화부터는 이 시각 이후에 처음 플레이한 새 게임을 자동으로 등록합니다.');
         }
-        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, lastPlayedRemainderCount, mergedRecordCount, separateRecordCount };
+        if (!silent && skippedLauncherChoiceCount > 0) alert(`하위 게임 선택이 필요한 통합 런처 ${skippedLauncherChoiceCount}개의 증가 시간은 아직 기록하지 않았습니다. 최근 플레이 동기화에서 하위 게임을 선택해 주세요.`);
+        return { updatedCount, skippedShortPlaytimeCount, skippedUnlinkedRecordCount, skippedLauncherChoiceCount, lastPlayedRemainderCount, mergedRecordCount, separateRecordCount };
     } catch (error) {
         if (silent) throw error;
         alert(`스팀 연동 실패: ${error.message}`);
